@@ -1,0 +1,8 @@
+jupyter_env/
+
+*.json
+*.csv
+*.png
+
+related_papers/*
+output/*
