@@ -16,6 +16,7 @@ class MODISConfig:
 @dataclass
 class GPSTConfig:
     """时空高斯过程配置"""
+    kernel_design: Literal["separable", "additive", "non_separable"] = "separable"
     kernel_space: Literal["matern32", "matern52", "rbf"] = "matern32"
     kernel_time: Literal["exp", "matern32", "rbf"] = "matern32"
     num_inducing: int = 800

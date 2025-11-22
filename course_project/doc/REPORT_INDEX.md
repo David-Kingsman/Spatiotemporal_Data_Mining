@@ -9,7 +9,7 @@ doc/
 ├── REPORT_INDEX.md              # 本文件 - 报告索引
 ├── EXPERIMENTAL_RESULTS.md      # 详细实验结果汇总
 ├── MODEL_COMPARISON.md          # 模型对比分析
-├── CROSS_VALIDATION_GUIDE.md    # 交叉验证方法说明
+├── METHODOLOGY.md               # 方法论说明
 └── README_LSTINTERP.md          # 项目技术文档
 ```
 
@@ -179,14 +179,9 @@ doc/
 
 ### 2. 实验设计优势
 
-根据 `CROSS_VALIDATION_GUIDE.md`:
+根据 `EXPERIMENTAL_RESULTS.md` 和 `METHODOLOGY.md`:
 
-1. **多种交叉验证策略**:
-   - 时间块CV：评估时间泛化能力
-   - 空间块CV：评估空间泛化能力
-   - K折CV：评估整体稳定性
-
-2. **严格的数据划分**:
+1. **严格的数据划分**:
    - 只用 `training_tensor` 进行训练和CV
    - 最终只在 `test_tensor` 上评估一次
 
@@ -208,7 +203,7 @@ doc/
 
 - 实验结果: 见 `doc/EXPERIMENTAL_RESULTS.md`
 - 模型对比: 见 `doc/MODEL_COMPARISON.md`
-- 交叉验证方法: 见 `doc/CROSS_VALIDATION_GUIDE.md`
+- 方法论: 见 `doc/METHODOLOGY.md`
 - 技术细节: 见 `doc/README_LSTINTERP.md`
 
 ### 代码引用
@@ -251,4 +246,5 @@ doc/
 *文档创建时间: 2024年*
 *最后更新: 2024年*
 *维护者: 项目团队*
+
 

@@ -39,3 +39,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+related_papers/*
+output/*
