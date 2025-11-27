@@ -96,7 +96,15 @@ class STSeparableGP(ApproximateGP):
         
         # 空间核（作用于前2维：lat, lon）
         # 确保长度尺度不会太小（避免数值不稳定）
-        lengthscale_space_val = max(lengthscale_space, 0.3)
+        # 处理tensor类型（如果是tensor，取平均值或第一个值）
+        if isinstance(lengthscale_space, torch.Tensor):
+            if lengthscale_space.numel() > 1:
+                lengthscale_space_val = float(lengthscale_space.mean().item())
+            else:
+                lengthscale_space_val = float(lengthscale_space.item())
+        else:
+            lengthscale_space_val = float(lengthscale_space)
+        lengthscale_space_val = max(lengthscale_space_val, 0.3)
         
         if config.kernel_space == "matern32":
             base_space = MaternKernel(nu=1.5, ard_num_dims=2)
@@ -121,7 +129,15 @@ class STSeparableGP(ApproximateGP):
         
         # 时间核（作用于第3维：time）
         # 确保时间长度尺度不会太小
-        lengthscale_time_val = max(lengthscale_time, 0.2)
+        # 处理tensor类型（如果是tensor，取平均值或第一个值）
+        if isinstance(lengthscale_time, torch.Tensor):
+            if lengthscale_time.numel() > 1:
+                lengthscale_time_val = float(lengthscale_time.mean().item())
+            else:
+                lengthscale_time_val = float(lengthscale_time.item())
+        else:
+            lengthscale_time_val = float(lengthscale_time)
+        lengthscale_time_val = max(lengthscale_time_val, 0.2)
         
         if config.kernel_time == "matern32":
             base_time = MaternKernel(nu=1.5, ard_num_dims=1)
@@ -202,7 +218,15 @@ class STAdditiveGP(ApproximateGP):
         
         # 空间核：Rational Quadratic (RQ) 或 Matern - 用于捕获多尺度空间相关性
         space_x = inducing_points[:, :2]  # (M, 2)
-        lengthscale_space_val = max(lengthscale_space, 0.3)
+        # 处理tensor类型（如果是tensor，取平均值或第一个值）
+        if isinstance(lengthscale_space, torch.Tensor):
+            if lengthscale_space.numel() > 1:
+                lengthscale_space_val = float(lengthscale_space.mean().item())
+            else:
+                lengthscale_space_val = float(lengthscale_space.item())
+        else:
+            lengthscale_space_val = float(lengthscale_space)
+        lengthscale_space_val = max(lengthscale_space_val, 0.3)
         
         if RQKernel_available:
             # 使用 RQ 核（如果可用）
@@ -231,7 +255,15 @@ class STAdditiveGP(ApproximateGP):
         # 时间核1：Periodic - 用于捕获周期性时间模式
         # 如果PeriodicKernel不可用，使用MaternKernel作为替代
         time_x = inducing_points[:, 2:3]  # (M, 1)
-        lengthscale_time_val = max(lengthscale_time, 0.2)
+        # 处理tensor类型（如果是tensor，取平均值或第一个值）
+        if isinstance(lengthscale_time, torch.Tensor):
+            if lengthscale_time.numel() > 1:
+                lengthscale_time_val = float(lengthscale_time.mean().item())
+            else:
+                lengthscale_time_val = float(lengthscale_time.item())
+        else:
+            lengthscale_time_val = float(lengthscale_time)
+        lengthscale_time_val = max(lengthscale_time_val, 0.2)
         period_val = max(period, 0.1)
         
         if PeriodicKernel_available:
@@ -339,7 +371,15 @@ class STNonSeparableGP(ApproximateGP):
         
         # 非分离核：直接对整个3D输入使用 Matern 核
         # 使用 ARD (Automatic Relevance Determination) 为每个维度学习不同的长度尺度
-        lengthscale_val = max(lengthscale, 0.3)
+        # 处理tensor类型（如果是tensor，取平均值或第一个值）
+        if isinstance(lengthscale, torch.Tensor):
+            if lengthscale.numel() > 1:
+                lengthscale_val = float(lengthscale.mean().item())
+            else:
+                lengthscale_val = float(lengthscale.item())
+        else:
+            lengthscale_val = float(lengthscale)
+        lengthscale_val = max(lengthscale_val, 0.3)
         
         # Matern 3/2 用于捕获平滑但不过度平滑的时空相关性
         if config.kernel_space == "matern32":

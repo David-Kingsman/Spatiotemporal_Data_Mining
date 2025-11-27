@@ -40,5 +40,9 @@ Thumbs.db
 # Logs
 *.log
 
-related_papers/*
-output/*
+# Project specific ignores
+related_papers/
+output/
+doc/
+data_visualization/
+report_images/

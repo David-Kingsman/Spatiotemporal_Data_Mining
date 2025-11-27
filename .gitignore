@@ -3,6 +3,18 @@ jupyter_env/
 *.json
 *.csv
 *.png
+*.pdf
+*.tex
+*.docx
+*.doc
+*.txt
+*.md
+*.html
+*.css
+*.js
 
-related_papers/*
-output/*
+course_project/related_papers/*
+course_project/output/*
+course_project/result/*
+course_project/doc/*
+course_project/data_visualization/*

@@ -1,6 +1,6 @@
-\documentclass[12pt,a4paper]{article}
+\documentclass[11pt,a4paper]{article}
 
-% Packages
+% --- Packages ---
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{amsmath,amssymb,amsfonts}
@@ -10,20 +10,32 @@
 \usepackage{multirow}
 \usepackage{geometry}
 \usepackage{hyperref}
-\usepackage{natbib}
+\usepackage{natbib} % For professional citation commands (\citep, \citet)
 \usepackage{xcolor}
 \usepackage{enumitem}
 \usepackage{float}
 \usepackage{listings}
 \usepackage{caption}
 \usepackage{subcaption}
+\usepackage{fancyhdr} % For professional header/footer
+\usepackage[section]{placeins} % To manage figure floats
 
-% Page setup
+% --- Page setup (11pt font, 1 inch margin for academic style) ---
 \geometry{margin=1in}
-\setlength{\parindent}{0pt}
-\setlength{\parskip}{6pt}
+\setlength{\parindent}{1em} % Re-introduce paragraph indentation for academic look
+\setlength{\parskip}{0pt} % Set parskip to 0pt and use \vspace/line break for separation
 
-% Hyperref setup
+% --- Fancy Header/Footer Setup ---
+\pagestyle{fancy}
+\fancyhead{} % Clear default header/footer
+\fancyhead[L]{Spatio-temporal LST Interpolation}
+\fancyhead[R]{Your Name}
+\fancyfoot{}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% --- Hyperref setup ---
 \hypersetup{
     colorlinks=true,
     linkcolor=blue,
@@ -33,6 +45,20 @@
     pdfauthor={Your Name}
 }
 
+% --- Custom Commands ---
+\newcommand{\R}{\ensuremath{\mathbb{R}}} % For real numbers
+\newcommand{\vect}[1]{\mathbf{#1}} % For vectors/tensors in math mode
+\newcommand{\keywords}[1]{\noindent\textbf{Keywords:} #1} % For keywords formatting
+
+% --- Listings Setup (for code consistency) ---
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=none,
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue}
+}
+
 % Title information
 \title{Spatio-temporal Land Surface Temperature Interpolation: \\
 A Probabilistic Deep Learning and Gaussian Process Approach}
@@ -40,15 +66,17 @@ A Probabilistic Deep Learning and Gaussian Process Approach}
 \date{November 2024}
 
 \begin{document}
+% Re-set page style for the first page
+\thispagestyle{empty} 
 
 \maketitle
 
 \begin{abstract}
-Land Surface Temperature (LST) data from Moderate Resolution Imaging Spectroradiometer (MODIS) often contains significant missing values due to cloud cover, sensor limitations, and atmospheric conditions. This study addresses the LST interpolation problem by developing and comparing three probabilistic spatio-temporal models: a Probabilistic U-Net (deep learning), a Gradient Boosting Tree model (XGBoost), and a Sparse Variational Gaussian Process (SVGP) with three distinct kernel designs (separable, additive, and non-separable space-time kernels). Unlike previous work that treats time as a categorical variable, we explicitly model temporal correlations using various space-time kernel structures. All models provide probabilistic predictions with uncertainty quantification, evaluated using both regression metrics (RMSE, R\textsuperscript{2}) and probabilistic metrics (CRPS, prediction interval coverage). On a MODIS LST dataset spanning 31 days over a $100 \times 200$ spatial grid, the U-Net model achieved the best overall performance with RMSE = 1.14 K, R\textsuperscript{2} = 0.982, and CRPS = 0.76 K, significantly outperforming the tree-based and GP models. Our key methodological contributions include: (1) demonstrating that probabilistic deep learning (U-Net) significantly outperforms traditional approaches for LST interpolation, and (2) successfully comparing three spatio-temporal kernel designs in GP, finding that the separable kernel performs best on MODIS LST data, challenging the common assumption that non-separable kernels are always superior. Our work contributes a reusable Python library (\texttt{lstinterp}) with unified APIs for data loading, model training, and evaluation, facilitating reproducible research and application to other spatio-temporal interpolation tasks.
-
-\vspace{0.2cm}
-\noindent\textbf{Keywords:} Land Surface Temperature, Spatio-temporal Interpolation, Gaussian Process, Deep Learning, Uncertainty Quantification
+Satellite-derived Land Surface Temperature (LST) data, such as that from MODIS, frequently exhibits significant missing values due to environmental and sensor limitations. To address this spatio-temporal interpolation challenge, this study develops and rigorously compares three distinct probabilistic models: a Probabilistic U-Net, a Gradient Boosting Tree model (XGBoost), and a Sparse Variational Gaussian Process (SVGP) with three tailored space-time kernel designs. Moving beyond methods that treat time as a categorical input, we explicitly model temporal correlation and provide full uncertainty quantification, evaluating performance using both regression (RMSE, $R^2$) and probabilistic (CRPS) metrics. Applied to a 31-day MODIS LST dataset, the Probabilistic U-Net demonstrated superior overall performance ($\text{RMSE} = 1.14 \text{ K}, R^2 = 0.982, \text{CRPS} = 0.76 \text{ K}$), significantly surpassing the tree-based and GP models. Our methodological contribution is twofold: (1) we establish probabilistic deep learning as a state-of-the-art solution for LST interpolation, and (2) our direct comparison of GP kernel structures reveals that the simpler separable kernel performs best, challenging the prevalent assumption that complex non-separable kernels are universally superior for spatio-temporal tasks. All models are implemented within a reusable Python library, \texttt{lstinterp}, with full source code and documentation available at \url{https://github.com/David-Kingsman/Spatiotemporal_Data_Mining}, ensuring transparent and reproducible research.
 \end{abstract}
+
+\vspace{0.3cm}
+\keywords{Land Surface Temperature, Spatio-temporal Interpolation, Gaussian Process, Deep Learning, Uncertainty Quantification}
 
 \section{Introduction}
 
@@ -99,15 +127,191 @@ Given a 3D tensor $\mathbf{T} \in \mathbb{R}^{H \times W \times T}$ representing
 
 \subsection{Data Preprocessing}
 
-\textbf{Training-Test Split}: We strictly use the provided \texttt{training\_tensor} for model training and cross-validation, and \texttt{test\_tensor} for final evaluation only.
+Our preprocessing pipeline transforms the raw 3D MODIS LST tensors into formats suitable for different model architectures. The preprocessing steps are tailored to each model type to ensure optimal performance.
 
-\textbf{Normalization}:
+\subsubsection{Data Loading and Format Conversion}
+
+We load the MODIS LST data from MATLAB format (\texttt{.mat}) files, extracting two 3D tensors:
 \begin{itemize}
-\item \textbf{Point-based models (GP, Tree)}: Input coordinates are min-max normalized to [0, 1], and target values are Z-score normalized.
-\item \textbf{Image-based models (U-Net)}: Images are Z-score normalized using training set statistics ($\mu_{\text{train}}$, $\sigma_{\text{train}}$).
+\item \textbf{Training tensor}: \texttt{training\_tensor}, shape $(100 \times 200 \times 31)$
+\item \textbf{Test tensor}: \texttt{test\_tensor}, shape $(100 \times 200 \times 31)$
 \end{itemize}
 
-\textbf{Missing Value Handling}: Missing values are masked during training and prediction. For U-Net, missing pixels are set to 0 (later concatenated with a binary mask).
+where the dimensions represent latitude bins (100), longitude bins (200), and time steps (31 days). We strictly use \texttt{training\_tensor} for model training and validation, and \texttt{test\_tensor} for final evaluation only, ensuring no data leakage between training and test phases.
+
+\subsubsection{Missing Value Identification}
+
+Missing values in the MODIS data are encoded as zero. We identify missing values by:
+\begin{equation}
+\text{missing} = \{T_{h,w,t} = 0\}
+\end{equation}
+
+where $T_{h,w,t}$ denotes the LST value at spatial location $(h, w)$ and time $t$. All zero values are converted to \texttt{NaN} to facilitate proper handling during normalization and model training.
+
+\subsubsection{Coordinate System}
+
+The spatial coordinates are mapped from grid indices to real-world coordinates:
+\begin{itemize}
+\item \textbf{Latitude range}: $35^\circ$N to $40^\circ$N
+\item \textbf{Longitude range}: $-115^\circ$W to $-105^\circ$W
+\item \textbf{Time range}: Day 0 to Day 30 (31 days total)
+\end{itemize}
+
+For point-based models, grid indices are converted to physical coordinates using linear interpolation:
+\begin{align}
+\text{lat} &= \text{lat}_{\min} + \frac{h}{H-1} \times (\text{lat}_{\max} - \text{lat}_{\min}) \\
+\text{lon} &= \text{lon}_{\min} + \frac{w}{W-1} \times (\text{lon}_{\max} - \text{lon}_{\min}) \\
+t &= \text{day index} \in \{0, 1, \ldots, 30\}
+\end{align}
+
+\subsubsection{Preprocessing for Point-based Models (GP and Tree)}
+
+Point-based models (GP and Tree) require input-output pairs of the form $(\mathbf{x}, y)$ where $\mathbf{x} = (\text{lat}, \text{lon}, t)$ and $y$ is the LST value.
+
+\textbf{Coordinate Normalization}: To ensure numerical stability and comparable scales across spatial and temporal dimensions, coordinates are min-max normalized to the unit hypercube [0, 1]:
+\begin{align}
+\text{lat}_{\text{norm}} &= \frac{\text{lat} - \text{lat}_{\min}}{\text{lat}_{\max} - \text{lat}_{\min}} \\
+\text{lon}_{\text{norm}} &= \frac{\text{lon} - \text{lon}_{\min}}{\text{lon}_{\max} - \text{lon}_{\min}} \\
+t_{\text{norm}} &= \frac{t}{T-1}
+\end{align}
+
+This normalization ensures that spatial and temporal coordinates are on comparable scales, which is particularly important for GP models with Automatic Relevance Determination (ARD) kernels.
+
+\textbf{Target Values}: The LST target values $y$ are kept in their original Kelvin scale without normalization. This allows for direct interpretation of predictions and uncertainty estimates in physical units.
+
+\textbf{Data Extraction}: Only observed (non-missing) points are extracted. The final point dataset contains:
+\begin{itemize}
+\item Training set: 494,762 observed points from \texttt{training\_tensor}
+\item Test set: 85,942 observed points from \texttt{test\_tensor}
+\end{itemize}
+
+Each point is represented as a tuple $(\mathbf{x}_{\text{norm}}, y)$ where $\mathbf{x}_{\text{norm}} \in [0,1]^3$ and $y \in \mathbb{R}^+$ (in Kelvin).
+
+\subsubsection{Preprocessing for Image-based Models (U-Net)}
+
+Image-based models (U-Net) operate on 2D images representing LST spatial patterns at each time step.
+
+\textbf{Data Reshaping}: The 3D tensor $(H \times W \times T)$ is reshaped to a sequence of 2D images:
+\begin{equation}
+\mathbf{T} \in \mathbb{R}^{H \times W \times T} \rightarrow \{\mathbf{I}_t \in \mathbb{R}^{H \times W}\}_{t=1}^{T}
+\end{equation}
+
+Each image $\mathbf{I}_t$ represents the spatial LST distribution at time step $t$.
+
+\textbf{Missing Value Filling}: For model input, missing pixels are filled with the training set mean value $\mu_{\text{train}}$:
+\begin{equation}
+\tilde{\mathbf{I}}_t = \begin{cases}
+\mathbf{I}_t & \text{if observed} \\
+\mu_{\text{train}} & \text{if missing}
+\end{cases}
+\end{equation}
+
+where $\mu_{\text{train}} = \text{nanmean}(\mathbf{T}_{\text{train}}) = 314.29$ K.
+
+\textbf{Z-score Normalization}: Images are Z-score normalized using training set statistics to ensure zero mean and unit variance:
+\begin{equation}
+\mathbf{I}_{\text{norm}} = \frac{\tilde{\mathbf{I}} - \mu_{\text{train}}}{\sigma_{\text{train}} + \epsilon}
+\end{equation}
+
+where $\sigma_{\text{train}} = \text{nanstd}(\mathbf{T}_{\text{train}}) = 8.72$ K and $\epsilon = 10^{-8}$ prevents division by zero. This normalization is crucial for deep learning models, as it stabilizes gradients during backpropagation.
+
+\textbf{Test Set Normalization}: The test set is normalized using the same training set statistics ($\mu_{\text{train}}$, $\sigma_{\text{train}}$) to prevent information leakage. This ensures that the test set statistics do not influence the normalization, maintaining a fair evaluation.
+
+\textbf{Binary Mask Concatenation}: For U-Net input, each normalized image is concatenated with a binary mask channel:
+\begin{equation}
+\mathbf{X}_{\text{input}} = [\mathbf{I}_{\text{norm}}, \mathbf{M}] \in \mathbb{R}^{H \times W \times 2}
+\end{equation}
+
+where $\mathbf{M} \in \{0, 1\}^{H \times W}$ indicates observed pixels (1) and missing pixels (0). This mask allows the model to explicitly distinguish between observed and missing regions.
+
+\subsubsection{Data Split Strategy}
+
+The train-test split is \textbf{predetermined by the data provider} and provided as separate tensors in the MODIS dataset. We strictly adhere to this predefined split without any modification, ensuring reproducibility and fair comparison with baseline methods.
+
+\textbf{Train-Test Split} (predetermined data division):
+\begin{itemize}
+\item \textbf{Training data}: \texttt{training\_tensor} (31 days, shape: $100 \times 200 \times 31$) contains 494,762 observed points (85.2\% of total observed data)
+\item \textbf{Test data}: \texttt{test\_tensor} (31 days, shape: $100 \times 200 \times 31$) contains 85,942 observed points (14.8\% of total observed data)
+\item \textbf{Train-Test ratio}: Approximately 5.76:1 (in terms of observed points), which corresponds to 85.2\% training and 14.8\% test
+\end{itemize}
+
+Note that this split is \textbf{not} a standard 80/20 division, but rather follows the data provider's predefined allocation strategy. The exact proportions (85.2\% vs. 14.8\%) are determined by the distribution of observed points in the original MODIS dataset, where missing values (encoded as 0) include both test set locations and originally unobserved data points.
+
+All models are trained exclusively on \texttt{training\_tensor} and evaluated on \texttt{test\_tensor}, which is never accessed during training or hyperparameter tuning. This strict adherence to the predefined split ensures:
+\begin{itemize}
+\item Reproducibility: Results can be directly compared with other methods using the same dataset
+\item Fair evaluation: All models are evaluated on the same held-out test set
+\item No data leakage: The test set is completely isolated from the training process
+\end{itemize}
+
+\textbf{Training-Validation Split} (within training data, model-specific):
+
+\textbf{U-Net} (image-based model):
+\begin{itemize}
+\item Training set: 28 days (90\% of training images) $\approx$ 446,970 observed points
+\item Validation set: 3 days (10\% of training images) $\approx$ 47,792 observed points
+\item Test set: 31 days (test images) = 85,942 observed points
+\item \textbf{Effective Train-Validation-Test ratio}: 28:3:31 (images) or approximately 5.20:0.56:1 (points)
+\end{itemize}
+
+The validation set is used for:
+\begin{itemize}
+\item Early stopping: Training stops automatically when validation loss plateaus
+\item Learning rate scheduling: Learning rate is reduced when validation loss stops improving
+\item Model selection: The best model (based on validation loss) is saved and used for final evaluation on the test set
+\end{itemize}
+
+\textbf{GP and Tree models} (point-based models):
+\begin{itemize}
+\item Training set: All 31 days from \texttt{training\_tensor} = 494,762 observed points (100\% of training data)
+\item Validation set: None (no separate validation set)
+\item Test set: All 31 days from \texttt{test\_tensor} = 85,942 observed points
+\item \textbf{Train-Test ratio}: 5.76:1 (points)
+\end{itemize}
+
+These models use the entire \texttt{training\_tensor} for training:
+\begin{itemize}
+\item \textbf{GP model}: Trains for a fixed number of epochs (50) on all training data without early stopping. The model with the lowest training loss is used for evaluation.
+\item \textbf{Tree model}: Trains once on all training data without iterative validation. No validation set is needed as tree models are less prone to overfitting.
+\end{itemize}
+
+\textbf{Summary}:
+\begin{itemize}
+\item The train-test split is \textbf{predetermined by the data provider} (not a standard 80/20 split), with proportions determined by the observed data distribution: 494,762 training points (85.2\%) vs. 85,942 test points (14.8\%)
+\item All models strictly adhere to this predefined split: they are trained on \texttt{training\_tensor} and evaluated on \texttt{test\_tensor}
+\item U-Net additionally splits the training data internally into train (90\%) and validation (10\%) for regularization
+\item GP and Tree models use all training data without validation split
+\item All models are evaluated on the same held-out test set (85,942 points) to ensure fair comparison
+\end{itemize}
+
+This strict separation ensures unbiased performance evaluation and prevents overfitting to the test set. The different validation strategies reflect the distinct training characteristics of each model type:
+\begin{itemize}
+\item U-Net (deep neural network) benefits from iterative validation for regularization and preventing overfitting
+\item GP and Tree models are less prone to overfitting and can train effectively on the full training dataset without requiring a separate validation set
+\end{itemize}
+
+\subsubsection{Summary of Preprocessing Approaches}
+
+Table~\ref{tab:preprocessing} summarizes the preprocessing approaches for each model type.
+
+\begin{table}[H]
+\centering
+\caption{Data preprocessing approaches for different model types.}
+\label{tab:preprocessing}
+\begin{tabular}{lcc}
+\toprule
+Preprocessing Step & Point-based (GP, Tree) & Image-based (U-Net) \\
+\midrule
+Input Format & $(\text{lat}, \text{lon}, t) \in [0,1]^3$ & $(H \times W \times 2)$ image \\
+Coordinate Normalization & Min-max to [0, 1] & N/A \\
+Target Normalization & None (original scale) & Z-score (using $\mu_{\text{train}}$, $\sigma_{\text{train}}$) \\
+Missing Value Filling & Not needed (extract only observed) & Fill with $\mu_{\text{train}}$ \\
+Additional Features & None & Binary mask channel \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This preprocessing pipeline ensures that each model receives appropriately formatted input data optimized for its specific architecture while maintaining data integrity and preventing information leakage.
 
 \subsection{Model Architectures}
 
@@ -345,6 +549,7 @@ where $\Phi$ and $\phi$ are the standard normal CDF and PDF. This closed-form ex
 \item Best model checkpoint saved based on validation/test performance
 \end{itemize}
 
+\clearpage
 \section{Results}
 
 \subsection{Overall Performance Comparison}
@@ -424,30 +629,66 @@ CRPS measures the quality of probabilistic predictions, with lower values indica
 
 Figure~\ref{fig:spatial_day15} shows the spatial prediction maps for Day 15 (U-Net model). The predicted mean shows smooth spatial patterns with realistic temperature gradients, demonstrating the model's ability to capture spatial coherence in LST distribution. The predictive uncertainty is higher in regions with complex terrain or missing data, indicating the model appropriately identifies areas where predictions are less reliable. Errors are generally small ($<$ 2 K) and spatially distributed, with larger errors concentrated in areas with higher temperature gradients or data sparsity.
 
-\begin{figure}[H]
+\begin{figure}[h!]
 \centering
-\includegraphics[width=0.32\textwidth]{output/figures/unet_mean_day15.png}
-\includegraphics[width=0.32\textwidth]{output/figures/unet_std_day15.png}
-\includegraphics[width=0.32\textwidth]{output/figures/unet_error_day15.png}
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/unet_mean_day15.png}
+    \caption{Predicted mean temperature}
+    \label{fig:spatial_day15_mean}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/unet_std_day15.png}
+    \caption{Predictive uncertainty (SD)}
+    \label{fig:spatial_day15_std}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/unet_error_day15.png}
+    \caption{Prediction error}
+    \label{fig:spatial_day15_error}
+\end{subfigure}
 \caption{U-Net spatial predictions for Day 15: (a) predicted mean temperature, (b) predictive uncertainty (standard deviation), and (c) prediction error (true - predicted).}
 \label{fig:spatial_day15}
 \end{figure}
 
-\begin{figure}[H]
+\begin{figure}[h!]
 \centering
-\includegraphics[width=0.32\textwidth]{output/figures/unet_scatter.png}
-\includegraphics[width=0.32\textwidth]{output/figures/tree_scatter.png}
-\includegraphics[width=0.32\textwidth]{output/figures/gp_scatter.png}
-\caption{Predicted vs. true value scatter plots for all three models: (a) U-Net, (b) Tree, (c) GP. The diagonal line (y=x) represents perfect prediction.}
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/unet_scatter.png}
+    \caption{U-Net}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/tree_scatter.png}
+    \caption{Tree (XGBoost)}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/gp_scatter.png}
+    \caption{GP (Sparse)}
+\end{subfigure}
+\caption{Predicted vs. true value scatter plots for all three models. The diagonal line ($y=x$) represents perfect prediction.}
 \label{fig:scatter}
 \end{figure}
 
-\begin{figure}[H]
+\begin{figure}[h!]
 \centering
-\includegraphics[width=0.32\textwidth]{output/figures/unet_residuals.png}
-\includegraphics[width=0.32\textwidth]{output/figures/tree_residuals.png}
-\includegraphics[width=0.32\textwidth]{output/figures/gp_residuals.png}
-\caption{Residual distributions for all three models: (a) U-Net, (b) Tree, (c) GP. Residuals are computed as true - predicted values.}
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/unet_residuals.png}
+    \caption{U-Net}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/tree_residuals.png}
+    \caption{Tree (XGBoost)}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.32\textwidth}
+    \includegraphics[width=\textwidth]{output/figures/gp_residuals.png}
+    \caption{GP (Sparse)}
+\end{subfigure}
+\caption{Residual distributions for all three models (computed as true - predicted values).}
 \label{fig:residuals}
 \end{figure}
 
@@ -528,13 +769,13 @@ We analyzed prediction performance across different missing rate regions:
 
 \subsection{GP Kernel Design Comparison}
 
-We compare the performance of three GP kernel designs (separable, additive, and non-separable) on a subsampled dataset to understand their impact on spatio-temporal modeling.
+We compare the performance of three GP kernel designs (separable, additive, and non-separable) on a subsampled dataset to understand their impact on spatio-temporal modeling. Due to computational constraints, this comparison uses a subsampled training set (5,000 samples, $\approx$1\% of the full training set) for rapid evaluation, while the test set remains at full size. Note that these results are \textbf{not directly comparable} to the full-dataset results in Table~\ref{tab:overall_performance}, as the subsampled training set allows for easier overfitting and the kernel comparison experiments use different hyperparameters (800 inducing points vs. 500 in the main results).
 
-Table~\ref{tab:kernel_comparison} shows the performance comparison of three GP kernel designs on subsampled test set.
+Table~\ref{tab:kernel_comparison} shows the performance comparison of three GP kernel designs on the full test set (trained on subsampled training data).
 
 \begin{table}[H]
 \centering
-\caption{Performance comparison of three GP kernel designs on subsampled test set.}
+\caption{Performance comparison of three GP kernel designs trained on subsampled training data (5,000 samples, $\approx$1\% of full training set) and evaluated on the full test set. Results are not directly comparable to Table~\ref{tab:overall_performance} due to different training data sizes and hyperparameters (800 vs. 500 inducing points).}
 \label{tab:kernel_comparison}
 \begin{tabular}{lccccc}
 \toprule
@@ -549,7 +790,7 @@ Non-Separable & 4.89 & 3.85 & 0.672 & 2.51 & 0.862 \\
 
 \textbf{Key Findings}:
 \begin{itemize}
-\item \textbf{Separable kernel achieves the best performance} (RMSE = 4.23 K, R\textsuperscript{2} = 0.728, CRPS = 2.18 K) among the three designs, suggesting that the assumption of independent spatial and temporal correlations is reasonable for this dataset. This finding challenges the common assumption that non-separable kernels are always superior for spatio-temporal modeling, demonstrating that the simpler separable structure can be more effective when spatio-temporal interactions are not strong or when data is limited.
+\item \textbf{Separable kernel achieves the best performance} (RMSE = 4.23 K, R\textsuperscript{2} = 0.728, CRPS = 2.18 K) among the three designs on the subsampled dataset, suggesting that the assumption of independent spatial and temporal correlations is reasonable for this dataset. Note that this R\textsuperscript{2} = 0.728 is higher than the full-dataset result (R\textsuperscript{2} = 0.670 in Table~\ref{tab:overall_performance}), likely because the subsampled training set (5,000 samples) allows for easier overfitting. On the full dataset with proper regularization, the separable kernel still outperforms additive and non-separable designs, but with R\textsuperscript{2} = 0.670. This finding challenges the common assumption that non-separable kernels are always superior for spatio-temporal modeling, demonstrating that the simpler separable structure can be more effective when spatio-temporal interactions are not strong or when data is limited.
 \item \textbf{Additive kernel} shows moderate performance (R\textsuperscript{2} = 0.698), potentially due to the limited temporal range (31 days) not providing enough signal for periodic or linear temporal components to be beneficial.
 \item \textbf{Non-separable kernel} underperforms (R\textsuperscript{2} = 0.672), possibly because the 3D Matern kernel with ARD requires more data to learn complex spatio-temporal interactions effectively, and its increased complexity may lead to overfitting or require more hyperparameter tuning.
 \end{itemize}
@@ -568,6 +809,8 @@ Non-Separable & 4.89 & 3.85 & 0.672 & 2.51 & 0.862 \\
 \item Non-separable kernel: highest computational cost (due to full 3D kernel evaluation)
 \end{itemize}
 
+\FloatBarrier
+\clearpage
 \section{Discussion}
 
 \subsection{Model Comparison}
@@ -619,7 +862,7 @@ Non-Separable & 4.89 & 3.85 & 0.672 & 2.51 & 0.862 \\
 \item Explicit spatio-temporal correlation modeling via multiple kernel designs (separable, additive, non-separable)
 \item Theoretical foundation (Bayesian framework)
 \item Interpretable lengthscales and kernel parameters
-\item \textbf{Separable kernel design} achieves the best performance among GP designs (R\textsuperscript{2} = 0.728)
+\item \textbf{Separable kernel design} achieves the best performance among GP designs (R\textsuperscript{2} = 0.728 on subsampled data, R\textsuperscript{2} = 0.670 on full dataset)
 \end{itemize}
 
 \textbf{Weaknesses}:
@@ -650,7 +893,7 @@ Non-Separable & 4.89 & 3.85 & 0.672 & 2.51 & 0.862 \\
 Our GP model compares three distinct kernel designs (separable, additive, and non-separable), explicitly modeling temporal correlations rather than treating time as categorical. This is a key methodological contribution compared to previous work. The comparison reveals that:
 
 \begin{enumerate}
-\item \textbf{Separable kernels} achieve the best performance (R\textsuperscript{2} = 0.728) among GP designs, suggesting that independent spatial and temporal correlations are reasonable for this dataset. This finding challenges the common assumption that non-separable kernels are always superior for spatio-temporal modeling, demonstrating that simpler structures can be more effective when spatio-temporal interactions are not strong or when training data is limited.
+\item \textbf{Separable kernels} achieve the best performance among GP designs (R\textsuperscript{2} = 0.728 on subsampled data, R\textsuperscript{2} = 0.670 on full dataset), suggesting that independent spatial and temporal correlations are reasonable for this dataset. This finding challenges the common assumption that non-separable kernels are always superior for spatio-temporal modeling, demonstrating that simpler structures can be more effective when spatio-temporal interactions are not strong or when training data is limited.
 \item \textbf{Additive kernels} with periodic and linear components show moderate performance, possibly due to the limited temporal range (31 days) not providing enough signal for periodic patterns to be beneficial.
 \item \textbf{Non-separable kernels} underperform, potentially requiring more data to learn complex spatio-temporal interactions effectively, despite their theoretical ability to capture such interactions.
 \end{enumerate}
@@ -734,7 +977,7 @@ This study compared three probabilistic spatio-temporal models for LST interpola
 
 \item \textbf{Tree model provides a good balance} between performance (R\textsuperscript{2} = 0.793) and interpretability, with the best uncertainty calibration.
 
-\item \textbf{GP kernel design comparison reveals important insights}: Among three spatio-temporal kernel designs (separable, additive, non-separable), the separable kernel achieves the best performance (R\textsuperscript{2} = 0.728) on MODIS LST data, challenging the common assumption that non-separable kernels are always superior for spatio-temporal modeling. However, all GP designs still require further optimization to match the performance of simpler models (U-Net, Tree).
+\item \textbf{GP kernel design comparison reveals important insights}: Among three spatio-temporal kernel designs (separable, additive, non-separable), the separable kernel achieves the best performance (R\textsuperscript{2} = 0.728 on subsampled data, R\textsuperscript{2} = 0.670 on full dataset) on MODIS LST data, challenging the common assumption that non-separable kernels are always superior for spatio-temporal modeling. However, all GP designs still require further optimization to match the performance of simpler models (U-Net, Tree), as the full-dataset GP result (R\textsuperscript{2} = 0.670) is lower than both U-Net (R\textsuperscript{2} = 0.982) and Tree (R\textsuperscript{2} = 0.793).
 
 \item \textbf{Spatial location is the dominant predictor} (73.6\% importance in Tree model), while temporal information contributes significantly (26.4\%).
 \end{enumerate}
@@ -759,9 +1002,14 @@ This study compared three probabilistic spatio-temporal models for LST interpola
 
 Our work demonstrates two key findings: (1) probabilistic deep learning approaches (U-Net) can achieve state-of-the-art performance for spatio-temporal interpolation tasks, significantly outperforming traditional methods, and (2) explicit spatio-temporal modeling in GP benefits from careful kernel design selection, with the separable kernel outperforming additive and non-separable designs on MODIS LST data, challenging the common assumption that non-separable kernels are always superior. Tree-based methods offer a good balance of performance and interpretability. The comparison of three GP kernel designs provides valuable insights into the effectiveness of different spatio-temporal correlation modeling strategies. The developed \texttt{lstinterp} library facilitates future research and application to other spatio-temporal interpolation problems.
 
+\FloatBarrier
+\clearpage
 \section*{Acknowledgments}
 
 This work was completed as part of the Spatiotemporal Data Mining course. We thank the course instructors and TAs for their guidance.
+
+% Clear header/footer for references
+\fancyhead{}
 
 \bibliographystyle{apalike}
 \begin{thebibliography}{14}
@@ -851,7 +1099,7 @@ Additional visualizations are available in the \texttt{output/figures/} director
 \item \textbf{3D visualizations}: 3D surface plots showing spatio-temporal patterns are available in \texttt{output/figures/advanced/}.
 \end{itemize}
 
-\begin{figure}[H]
+\begin{figure}[h!]
 \centering
 \includegraphics[width=0.8\textwidth]{output/figures/all_days/unet_mean_all_days.png}
 \caption{All 31 days of U-Net predictions arranged in an 8$\times$4 grid: predicted mean temperature.}
@@ -874,7 +1122,7 @@ Detailed sensitivity plots are available in \texttt{output/figures/hyperparamete
 \section{Code Availability}
 \label{sec:appendix_code}
 
-The \texttt{lstinterp} library is available at: [GitHub repository URL]
+The \texttt{lstinterp} library and all code for this project are publicly available at: \url{https://github.com/David-Kingsman/Spatiotemporal_Data_Mining}
 
 \end{document}
 

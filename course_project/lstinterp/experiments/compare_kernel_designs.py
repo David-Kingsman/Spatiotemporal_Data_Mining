@@ -95,8 +95,8 @@ def evaluate_model(model, test_dataset, device='cpu'):
     ss_tot = np.sum((test_values - np.mean(test_values)) ** 2)
     r2 = 1 - (ss_res / (ss_tot + 1e-8))
     
-    # CRPS
-    crps = np.mean(crps_gaussian(test_values, mean, std))
+    # CRPS (crps_gaussian already returns the mean)
+    crps = crps_gaussian(test_values, mean, std)
     
     # 预测区间覆盖率（90%）
     lower = mean - 1.645 * std  # 5%分位数

@@ -143,16 +143,181 @@ def generate_unet_predictions(H, W, T):
 
 
 def generate_gp_predictions(H, W, T):
-    """生成GP模型的所有天数预测（需要从保存的结果重新预测或加载）"""
+    """生成GP模型的所有天数预测"""
     print("\n" + "=" * 80)
     print("  GP模型预测")
     print("=" * 80)
     
-    print("⚠️  GP模型预测需要重新运行，耗时较长")
-    print("   建议：从已有的gp_results.json中提取，或运行train_gp.py生成预测")
-    print("   暂时跳过GP模型的可视化生成")
+    # 检查模型文件
+    model_path = OUTPUT_DIR / "models" / "gp_model.pth"
+    if not model_path.exists():
+        print(f"❌ 模型文件不存在: {model_path}")
+        print("   请先运行 train_gp.py 训练模型")
+        return None, None, None
     
-    return None, None, None
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"使用设备: {device}")
+    
+    # 加载模型checkpoint
+    print("加载GP模型...")
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    
+    # 获取配置
+    if 'config' in checkpoint:
+        config = checkpoint['config']
+        # 兼容旧checkpoint：如果没有kernel_design属性，设置为默认值"separable"
+        if not hasattr(config, 'kernel_design'):
+            # 直接设置属性（如果config是dataclass实例，这应该是可以的）
+            config.kernel_design = "separable"
+    else:
+        # 使用默认配置
+        config = GPSTConfig(
+            kernel_space="matern32",
+            kernel_time="matern32",
+            num_inducing=500,
+            lr=0.01,
+            num_epochs=50,
+            kernel_design="separable"  # 默认使用separable设计
+        )
+    
+    # 创建诱导点
+    if 'inducing_points' in checkpoint:
+        inducing_points = checkpoint['inducing_points'].to(device)
+    else:
+        # 创建默认诱导点
+        from lstinterp.models.gp_st import create_inducing_points
+        inducing_points = create_inducing_points(
+            n_space=15,
+            n_time=10,
+            normalize=True
+        ).to(device)
+        if len(inducing_points) > config.num_inducing:
+            indices = torch.randperm(len(inducing_points))[:config.num_inducing]
+            inducing_points = inducing_points[indices]
+    
+    # 初始化模型（使用checkpoint中的初始化参数或默认值）
+    # 对于旧checkpoint，这些参数可能不存在，使用默认值
+    # 从tensor中提取scalar值（如果存在）
+    if 'lengthscale_space' in checkpoint:
+        ls_space = checkpoint['lengthscale_space']
+        if isinstance(ls_space, torch.Tensor):
+            if ls_space.numel() > 1:
+                lengthscale_space = float(ls_space.mean().item())
+            else:
+                lengthscale_space = float(ls_space.item())
+        else:
+            lengthscale_space = float(ls_space)
+    else:
+        lengthscale_space = 0.5
+    
+    if 'lengthscale_time' in checkpoint:
+        ls_time = checkpoint['lengthscale_time']
+        if isinstance(ls_time, torch.Tensor):
+            if ls_time.numel() > 1:
+                lengthscale_time = float(ls_time.mean().item())
+            else:
+                lengthscale_time = float(ls_time.item())
+        else:
+            lengthscale_time = float(ls_time)
+    else:
+        lengthscale_time = 0.3
+    
+    if 'outputscale' in checkpoint:
+        os_val = checkpoint['outputscale']
+        if isinstance(os_val, torch.Tensor):
+            outputscale = float(os_val.item())
+        else:
+            outputscale = float(os_val)
+    else:
+        outputscale = 1.0
+    
+    if 'noise' in checkpoint:
+        noise_val = checkpoint['noise']
+        if isinstance(noise_val, torch.Tensor):
+            noise = float(noise_val.item())
+        else:
+            noise = float(noise_val)
+    else:
+        noise = 0.2
+    
+    # 初始化模型（使用scalar值而不是tensor）
+    try:
+        model = GPSTModel(
+            inducing_points, config,
+            lengthscale_space=lengthscale_space,
+            lengthscale_time=lengthscale_time,
+            outputscale=outputscale,
+            noise=noise
+        ).to(device)
+    except TypeError:
+        # 如果GPSTModel不接受这些参数，使用简化版本
+        model = GPSTModel(inducing_points, config).to(device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    model.likelihood.eval()
+    
+    print("✅ GP模型加载完成")
+    
+    # 加载测试数据（点模式）
+    test_tensor = load_modis_tensor(str(DATA_PATH), key="test_tensor")
+    test_dataset = MODISDataset(test_tensor, mode="point", normalize_coords=True)
+    
+    # 重新组织为空间网格
+    all_pred_mean = np.full((H, W, T), np.nan)
+    all_pred_std = np.full((H, W, T), np.nan)
+    all_true = np.full((H, W, T), np.nan)
+    
+    print("\n生成预测...")
+    # 获取原始索引
+    test_mask = (test_tensor != 0)
+    lat_indices, lon_indices, t_indices = np.where(test_mask)
+    
+    # 批量预测（GP模型需要批量处理）
+    batch_size = 1000
+    n_points = len(test_dataset)
+    
+    X_test_list = []
+    indices_list = []
+    
+    for idx in range(n_points):
+        x, y = test_dataset[idx]
+        X_test_list.append(x.numpy())
+        indices_list.append((lat_indices[idx], lon_indices[idx], t_indices[idx]))
+    
+    X_test = np.array(X_test_list)
+    X_test_tensor = torch.FloatTensor(X_test).to(device)
+    
+    print(f"测试点数: {n_points}")
+    print("开始批量预测（可能需要一些时间）...")
+    
+    all_means = []
+    all_stds = []
+    
+    with torch.no_grad():
+        for i in range(0, n_points, batch_size):
+            batch_end = min(i + batch_size, n_points)
+            X_batch = X_test_tensor[i:batch_end]
+            
+            # GP预测
+            mean, std = model.predict(X_batch)
+            
+            all_means.append(mean.cpu().numpy())
+            all_stds.append(std.cpu().numpy())
+            
+            if (i // batch_size + 1) % 10 == 0:
+                print(f"  已处理: {batch_end}/{n_points} 点 ({batch_end/n_points*100:.1f}%)")
+    
+    pred_mean = np.concatenate(all_means)
+    pred_std = np.concatenate(all_stds)
+    
+    # 填充到网格
+    for idx, (lat_idx, lon_idx, t_idx) in enumerate(indices_list):
+        all_pred_mean[lat_idx, lon_idx, t_idx] = pred_mean[idx]
+        all_pred_std[lat_idx, lon_idx, t_idx] = pred_std[idx]
+        all_true[lat_idx, lon_idx, t_idx] = test_dataset.values[idx]
+    
+    print("✅ GP预测完成")
+    return all_pred_mean, all_pred_std, all_true
 
 
 def generate_tree_predictions(H, W, T):
@@ -251,31 +416,56 @@ def generate_tree_predictions(H, W, T):
 def plot_all_days_grid(
     pred_mean, pred_std, true_values,
     model_name, H, W, T,
-    save_prefix
+    save_prefix,
+    vmin_mean=None, vmax_mean=None,
+    vmin_std=None, vmax_std=None,
+    vmax_error=None
 ):
-    """生成所有天数的网格图（8行×4列）"""
+    """生成所有天数的网格图（8行×4列）
+    
+    参数:
+        vmin_mean, vmax_mean: 预测均值的颜色范围（如果为None则使用当前数据范围）
+        vmin_std, vmax_std: 预测标准差的颜色范围（如果为None则使用当前数据范围）
+        vmax_error: 误差的最大绝对值（如果为None则使用当前数据范围）
+    """
     print(f"\n生成{model_name}所有天数可视化（{T}天，8行×4列布局）...")
     
     # 计算每行的天数
     n_rows = 8
     n_cols = 4
     
-    # 为每种图创建网格
+    # 为每种图创建网格（减少留白，去掉顶部标题）
     fig_mean = plt.figure(figsize=(20, 40))
     fig_std = plt.figure(figsize=(20, 40))
     fig_error = plt.figure(figsize=(20, 40))
     
-    gs_mean = GridSpec(n_rows, n_cols, figure=fig_mean, hspace=0.3, wspace=0.3)
-    gs_std = GridSpec(n_rows, n_cols, figure=fig_std, hspace=0.3, wspace=0.3)
-    gs_error = GridSpec(n_rows, n_cols, figure=fig_error, hspace=0.3, wspace=0.3)
+    # 减少hspace和wspace以减少留白
+    gs_mean = GridSpec(n_rows, n_cols, figure=fig_mean, hspace=0.1, wspace=0.1, 
+                       left=0.02, right=0.98, top=0.98, bottom=0.02)
+    gs_std = GridSpec(n_rows, n_cols, figure=fig_std, hspace=0.1, wspace=0.1,
+                      left=0.02, right=0.98, top=0.98, bottom=0.02)
+    gs_error = GridSpec(n_rows, n_cols, figure=fig_error, hspace=0.1, wspace=0.1,
+                        left=0.02, right=0.98, top=0.98, bottom=0.02)
     
-    vmin_mean = np.nanmin(pred_mean)
-    vmax_mean = np.nanmax(pred_mean)
-    vmin_std = np.nanmin(pred_std)
-    vmax_std = np.nanmax(pred_std)
+    # 如果没有提供统一范围，使用当前数据范围
+    if vmin_mean is None:
+        vmin_mean = np.nanmin(pred_mean)
+    if vmax_mean is None:
+        vmax_mean = np.nanmax(pred_mean)
+    if vmin_std is None:
+        vmin_std = np.nanmin(pred_std)
+    if vmax_std is None:
+        vmax_std = np.nanmax(pred_std)
     
     errors = true_values - pred_mean
-    vmax_error = np.nanmax(np.abs(errors))
+    if vmax_error is None:
+        vmax_error = np.nanmax(np.abs(errors))
+    
+    # 打印使用的颜色范围（用于调试）
+    print(f"  {model_name} 使用颜色范围:")
+    print(f"    Mean: [{vmin_mean:.2f}, {vmax_mean:.2f}] K")
+    print(f"    Std:  [{vmin_std:.2f}, {vmax_std:.2f}] K")
+    print(f"    Error: [-{vmax_error:.2f}, {vmax_error:.2f}] K")
     
     for t in range(min(T, n_rows * n_cols)):
         row = t // n_cols
@@ -288,10 +478,12 @@ def plot_all_days_grid(
             aspect='auto', origin='lower',
             cmap='jet_r', vmin=vmin_mean, vmax=vmax_mean
         )
-        ax_mean.set_title(f'Day {t+1}: Mean Prediction', fontsize=10)
-        ax_mean.set_xlabel('Longitude Index')
-        ax_mean.set_ylabel('Latitude Index')
-        plt.colorbar(im_mean, ax=ax_mean, label='Temperature (K)')
+        ax_mean.set_title(f'Day {t+1}', fontsize=8, pad=2)  # 减小字体和padding
+        ax_mean.set_xlabel('Longitude Index', fontsize=7)
+        ax_mean.set_ylabel('Latitude Index', fontsize=7)
+        # 显式设置imshow的范围，确保颜色范围一致
+        im_mean.set_clim(vmin=vmin_mean, vmax=vmax_mean)
+        fig_mean.colorbar(im_mean, ax=ax_mean, label='Temperature (K)', shrink=0.8, aspect=20)
         
         # 预测不确定性图
         ax_std = fig_std.add_subplot(gs_std[row, col])
@@ -300,10 +492,12 @@ def plot_all_days_grid(
             aspect='auto', origin='lower',
             cmap='viridis', vmin=vmin_std, vmax=vmax_std
         )
-        ax_std.set_title(f'Day {t+1}: Uncertainty', fontsize=10)
-        ax_std.set_xlabel('Longitude Index')
-        ax_std.set_ylabel('Latitude Index')
-        plt.colorbar(im_std, ax=ax_std, label='Std Dev (K)')
+        ax_std.set_title(f'Day {t+1}', fontsize=8, pad=2)  # 减小字体和padding
+        ax_std.set_xlabel('Longitude Index', fontsize=7)
+        ax_std.set_ylabel('Latitude Index', fontsize=7)
+        # 显式设置imshow的范围，确保颜色范围一致
+        im_std.set_clim(vmin=vmin_std, vmax=vmax_std)
+        fig_std.colorbar(im_std, ax=ax_std, label='Std Dev (K)', shrink=0.8, aspect=20)
         
         # 预测误差图
         ax_error = fig_error.add_subplot(gs_error[row, col])
@@ -313,28 +507,28 @@ def plot_all_days_grid(
             aspect='auto', origin='lower',
             cmap='RdBu_r', vmin=-vmax_error, vmax=vmax_error
         )
-        ax_error.set_title(f'Day {t+1}: Error', fontsize=10)
-        ax_error.set_xlabel('Longitude Index')
-        ax_error.set_ylabel('Latitude Index')
-        plt.colorbar(im_error, ax=ax_error, label='Error (K)')
+        ax_error.set_title(f'Day {t+1}', fontsize=8, pad=2)  # 减小字体和padding
+        ax_error.set_xlabel('Longitude Index', fontsize=7)
+        ax_error.set_ylabel('Latitude Index', fontsize=7)
+        # 显式设置imshow的范围，确保颜色范围一致
+        im_error.set_clim(vmin=-vmax_error, vmax=vmax_error)
+        fig_error.colorbar(im_error, ax=ax_error, label='Error (K)', shrink=0.8, aspect=20)
     
     # 保存
     mean_path = FIGURES_DIR / f"{save_prefix}_mean_all_days.png"
     std_path = FIGURES_DIR / f"{save_prefix}_std_all_days.png"
     error_path = FIGURES_DIR / f"{save_prefix}_error_all_days.png"
     
-    fig_mean.suptitle(f'{model_name} - Mean Predictions (All {T} Days)', fontsize=16, y=0.998)
-    fig_mean.savefig(mean_path, dpi=150, bbox_inches='tight')
+    # 移除顶部标题，直接保存（减少留白）
+    fig_mean.savefig(mean_path, dpi=150, bbox_inches='tight', pad_inches=0.05)
     plt.close(fig_mean)
     print(f"✅ 预测均值网格图已保存: {mean_path}")
     
-    fig_std.suptitle(f'{model_name} - Prediction Uncertainty (All {T} Days)', fontsize=16, y=0.998)
-    fig_std.savefig(std_path, dpi=150, bbox_inches='tight')
+    fig_std.savefig(std_path, dpi=150, bbox_inches='tight', pad_inches=0.05)
     plt.close(fig_std)
     print(f"✅ 预测不确定性网格图已保存: {std_path}")
     
-    fig_error.suptitle(f'{model_name} - Prediction Errors (All {T} Days)', fontsize=16, y=0.998)
-    fig_error.savefig(error_path, dpi=150, bbox_inches='tight')
+    fig_error.savefig(error_path, dpi=150, bbox_inches='tight', pad_inches=0.05)
     plt.close(fig_error)
     print(f"✅ 预测误差网格图已保存: {error_path}")
 
@@ -348,39 +542,96 @@ def main():
     # 加载测试数据
     test_tensor, H, W, T = load_test_data()
     
+    # 收集所有模型的预测结果
+    all_results = {}
+    
     # U-Net模型
     unet_results = generate_unet_predictions(H, W, T)
     if unet_results[0] is not None:
-        pred_mean, pred_std, true_values = unet_results
-        plot_all_days_grid(
-            pred_mean, pred_std, true_values,
-            "U-Net", H, W, T,
-            "unet"
-        )
-        
-        # 保存预测数据（用于后续分析）
-        np.save(FIGURES_DIR / "unet_pred_mean.npy", pred_mean)
-        np.save(FIGURES_DIR / "unet_pred_std.npy", pred_std)
-        np.save(FIGURES_DIR / "unet_true.npy", true_values)
+        all_results['unet'] = unet_results
+        np.save(FIGURES_DIR / "unet_pred_mean.npy", unet_results[0])
+        np.save(FIGURES_DIR / "unet_pred_std.npy", unet_results[1])
+        np.save(FIGURES_DIR / "unet_true.npy", unet_results[2])
         print("✅ U-Net预测数据已保存")
     
     # Tree模型
     tree_results = generate_tree_predictions(H, W, T)
     if tree_results[0] is not None:
-        pred_mean, pred_std, true_values = tree_results
-        plot_all_days_grid(
-            pred_mean, pred_std, true_values,
-            "Tree (XGBoost)", H, W, T,
-            "tree"
-        )
-        
-        # 保存预测数据
-        np.save(FIGURES_DIR / "tree_pred_mean.npy", pred_mean)
-        np.save(FIGURES_DIR / "tree_pred_std.npy", pred_std)
-        np.save(FIGURES_DIR / "tree_true.npy", true_values)
+        all_results['tree'] = tree_results
+        np.save(FIGURES_DIR / "tree_pred_mean.npy", tree_results[0])
+        np.save(FIGURES_DIR / "tree_pred_std.npy", tree_results[1])
+        np.save(FIGURES_DIR / "tree_true.npy", tree_results[2])
         print("✅ Tree预测数据已保存")
     
-    # GP模型（跳过，需要重新训练）
+    # GP模型
+    gp_results = generate_gp_predictions(H, W, T)
+    if gp_results[0] is not None:
+        all_results['gp'] = gp_results
+        np.save(FIGURES_DIR / "gp_pred_mean.npy", gp_results[0])
+        np.save(FIGURES_DIR / "gp_pred_std.npy", gp_results[1])
+        np.save(FIGURES_DIR / "gp_true.npy", gp_results[2])
+        print("✅ GP预测数据已保存")
+    
+    # 计算统一的颜色范围（跨所有模型）
+    print("\n计算统一的颜色范围（跨所有模型）...")
+    all_means = []
+    all_stds = []
+    all_errors = []
+    
+    for model_name, (pred_mean, pred_std, true_values) in all_results.items():
+        all_means.append(pred_mean)
+        all_stds.append(pred_std)
+        errors = true_values - pred_mean
+        all_errors.append(np.abs(errors))
+    
+    if all_means:
+        # 统一的颜色范围
+        vmin_mean = min(np.nanmin(m) for m in all_means)
+        vmax_mean = max(np.nanmax(m) for m in all_means)
+        vmin_std = max(0, min(np.nanmin(s) for s in all_stds))  # 确保std最小值至少为0
+        vmax_std = max(np.nanmax(s) for s in all_stds)
+        vmax_error = max(np.nanmax(e) for e in all_errors)
+        
+        print(f"统一颜色范围:")
+        print(f"  Mean: [{vmin_mean:.2f}, {vmax_mean:.2f}] K")
+        print(f"  Std:  [{vmin_std:.2f}, {vmax_std:.2f}] K")
+        print(f"  Error: [-{vmax_error:.2f}, {vmax_error:.2f}] K")
+        print(f"\n⚠️  所有模型将使用上述统一颜色范围绘制")
+        
+        # 使用统一范围绘制所有模型的图片
+        if 'unet' in all_results:
+            pred_mean, pred_std, true_values = all_results['unet']
+            plot_all_days_grid(
+                pred_mean, pred_std, true_values,
+                "U-Net", H, W, T,
+                "unet",
+                vmin_mean=vmin_mean, vmax_mean=vmax_mean,
+                vmin_std=vmin_std, vmax_std=vmax_std,
+                vmax_error=vmax_error
+            )
+        
+        if 'tree' in all_results:
+            pred_mean, pred_std, true_values = all_results['tree']
+            plot_all_days_grid(
+                pred_mean, pred_std, true_values,
+                "Tree (XGBoost)", H, W, T,
+                "tree",
+                vmin_mean=vmin_mean, vmax_mean=vmax_mean,
+                vmin_std=vmin_std, vmax_std=vmax_std,
+                vmax_error=vmax_error
+            )
+        
+        if 'gp' in all_results:
+            pred_mean, pred_std, true_values = all_results['gp']
+            plot_all_days_grid(
+                pred_mean, pred_std, true_values,
+                "GP (Sparse)", H, W, T,
+                "gp",
+                vmin_mean=vmin_mean, vmax_mean=vmax_mean,
+                vmin_std=vmin_std, vmax_std=vmax_std,
+                vmax_error=vmax_error
+            )
+    
     print("\n" + "=" * 80)
     print("  完成")
     print("=" * 80)

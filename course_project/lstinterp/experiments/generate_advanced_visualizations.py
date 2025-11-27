@@ -145,35 +145,51 @@ def generate_3d_visualization(model_name="unet"):
     plt.close()
     print(f"✅ 3D可视化已保存: {fig_path}")
     
-    # 创建时间切片3D图（选择几个时间点）
-    fig = plt.figure(figsize=(18, 6))
-    selected_days = [0, T//4, T//2, 3*T//4, T-1]
+    # 创建时间切片3D图（所有31天，8行×4列布局）
+    print(f"  生成所有{T}天的3D表面图（8行×4列布局）...")
+    n_rows = 8
+    n_cols = 4
+    fig = plt.figure(figsize=(20, 40))
     
-    for idx, day in enumerate(selected_days):
-        ax = fig.add_subplot(1, 5, idx+1, projection='3d')
+    # 确定统一的颜色范围
+    vmin = np.nanmin(pred_mean)
+    vmax = np.nanmax(pred_mean)
+    
+    # 降采样空间维度以提高渲染速度（每5个点采样一次）
+    step = 5
+    lat_sampled = np.arange(0, H, step)
+    lon_sampled = np.arange(0, W, step)
+    
+    for day in range(min(T, n_rows * n_cols)):
+        row = day // n_cols
+        col = day % n_cols
         
-        # 创建空间网格
-        lat_2d, lon_2d = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-        values_2d = pred_mean[:, :, day]
+        ax = fig.add_subplot(n_rows, n_cols, day+1, projection='3d')
+        
+        # 创建降采样后的空间网格
+        lat_2d, lon_2d = np.meshgrid(lat_sampled, lon_sampled, indexing='ij')
+        values_2d = pred_mean[lat_2d, lon_2d, day]
         
         # 绘制3D表面
         surf = ax.plot_surface(lat_2d, lon_2d, values_2d, cmap='jet_r', 
+                              vmin=vmin, vmax=vmax,
                               alpha=0.8, linewidth=0, antialiased=True)
         
-        ax.set_xlabel('Latitude')
-        ax.set_ylabel('Longitude')
-        ax.set_zlabel('Temperature (K)')
-        ax.set_title(f'Day {day+1}', fontsize=10, fontweight='bold')
+        ax.set_xlabel('Latitude', fontsize=7)
+        ax.set_ylabel('Longitude', fontsize=7)
+        ax.set_zlabel('Temp (K)', fontsize=7)
+        ax.set_title(f'Day {day+1}', fontsize=8, fontweight='bold', pad=5)
         ax.view_init(elev=30, azim=45)
+        # 减小刻度字体大小
+        ax.tick_params(labelsize=6)
     
-    plt.suptitle(f'{model_name.upper()} - 3D Surface Plots at Different Days', 
-                fontsize=14, fontweight='bold', y=0.98)
-    plt.tight_layout()
+    # 移除顶部标题，减少留白
+    plt.tight_layout(pad=0.5)
     
     fig_path = FIGURES_DIR / f"{model_name}_3d_surfaces.png"
-    plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+    plt.savefig(fig_path, dpi=150, bbox_inches='tight', pad_inches=0.05)
     plt.close()
-    print(f"✅ 3D表面图已保存: {fig_path}")
+    print(f"✅ 3D表面图（所有{T}天）已保存: {fig_path}")
     
     return fig_path
 
@@ -296,7 +312,7 @@ def main():
     print("  高级可视化生成")
     print("=" * 80)
     
-    models = ["unet", "tree"]
+    models = ["unet", "tree", "gp"]
     
     for model_name in models:
         print(f"\n处理{model_name.upper()}模型...")
