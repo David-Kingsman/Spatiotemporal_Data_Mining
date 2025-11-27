@@ -13,8 +13,9 @@ jupyter_env/
 *.css
 *.js
 
-course_project/related_papers/*
-course_project/output/*
-course_project/result/*
-course_project/doc/*
-course_project/data_visualization/*
+course_project/related_papers/
+course_project/output/
+course_project/result/
+course_project/doc/
+course_project/data_visualization/
+course_project/report_images/
