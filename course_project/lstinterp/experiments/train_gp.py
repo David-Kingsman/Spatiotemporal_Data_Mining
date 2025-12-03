@@ -1,31 +1,31 @@
 """
-训练时空高斯过程模型（Spatio-temporal Gaussian Process）
+Train Spatio-temporal Gaussian Process Model
 
-本脚本实现了基于时空可分核（separable spatio-temporal kernel）的稀疏高斯过程模型，
-用于MODIS地表温度数据的插值和预测。
+This script implements a Sparse Gaussian Process model based on separable spatio-temporal kernels,
+used for interpolation and prediction of MODIS Land Surface Temperature (LST) data.
 
-主要特点：
-1. 时空可分核：k(x, x') = k_space(lat, lon) × k_time(t)
-   - 空间核：Matern 3/2（捕获空间相关性）
-   - 时间核：Matern 3/2（捕获时间相关性）
-2. 稀疏GP：使用诱导点（inducing points）提高可扩展性
-3. 变分推理：使用Variational ELBO进行高效训练
-4. 概率预测：提供预测均值和不确定性估计
+Key Features:
+1. Separable Spatio-Temporal Kernel: k(x, x') = k_space(lat, lon) * k_time(t)
+   - Spatial Kernel: Matern 3/2 (captures spatial correlation)
+   - Temporal Kernel: Matern 3/2 (captures temporal correlation)
+2. Sparse GP: Uses inducing points to improve scalability
+3. Variational Inference: Uses Variational ELBO for efficient training
+4. Probabilistic Prediction: Provides predictive mean and uncertainty estimates
 
-数据格式：
-- 输入：3维张量 (H, W, T) = (100, 200, 31)
-  - H: 纬度维度（35°-40°N）
-  - W: 经度维度（-115°--105°W）
-  - T: 时间维度（31天）
-- 输出：温度值（单位：Kelvin）
-- 缺失值：用0表示
+Data Format:
+- Input: 3D tensor (H, W, T) = (100, 200, 31)
+  - H: Latitude dimension (35°-40°N)
+  - W: Longitude dimension (-115°--105°W)
+  - T: Time dimension (31 days)
+- Output: Temperature values (Unit: Kelvin)
+- Missing values: Represented by 0
 
-评估指标：
-- 回归指标：RMSE, MAE, R², MAPE
-- 概率指标：CRPS, 90%预测区间覆盖率, 校准误差
+Evaluation Metrics:
+- Regression Metrics: RMSE, MAE, R², MAPE
+- Probabilistic Metrics: CRPS, 90% Prediction Interval Coverage, Calibration Error
 
-作者：lstinterp团队
-创建时间：2024年
+Author: lstinterp team
+Created: 2024
 """
 import numpy as np
 import torch
@@ -46,7 +46,7 @@ from lstinterp.metrics import compute_regression_metrics, compute_probabilistic_
 from lstinterp.viz import plot_prediction_scatter, plot_residuals
 from lstinterp.utils import set_seed
 
-# 创建输出目录
+# Create output directories
 OUTPUT_DIR = Path("output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 (OUTPUT_DIR / "results").mkdir(exist_ok=True)
@@ -55,242 +55,242 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 def print_section_header(title, width=80):
-    """打印章节标题"""
+    """Print section header"""
     print("\n" + "=" * width)
     print(f"  {title}")
     print("=" * width)
 
 
 def print_data_statistics(tensor, name, mode="point"):
-    """打印详细的数据统计信息"""
-    print_section_header(f"{name} 数据统计")
+    """Print detailed data statistics"""
+    print_section_header(f"{name} Data Statistics")
     
     H, W, T = tensor.shape
-    print(f"数据维度: {H} × {W} × {T}")
-    print(f"  - 纬度维度 (H): {H} 个网格点，范围: 35°N - 40°N")
-    print(f"  - 经度维度 (W): {W} 个网格点，范围: -115°W - -105°W")
-    print(f"  - 时间维度 (T): {T} 天（2020年8月）")
+    print(f"Data Dimensions: {H} x {W} x {T}")
+    print(f"  - Latitude (H): {H} grid points, range: 35°N - 40°N")
+    print(f"  - Longitude (W): {W} grid points, range: -115°W - -105°W")
+    print(f"  - Time (T): {T} days (August 2020)")
     
-    # 缺失值统计
+    # Missing value statistics
     mask = (tensor != 0.0)
     total_points = H * W * T
     observed_points = mask.sum()
     missing_points = total_points - observed_points
     missing_ratio = missing_points / total_points * 100
     
-    print(f"\n缺失值统计:")
-    print(f"  - 总网格点数: {total_points:,}")
-    print(f"  - 观测点数: {observed_points:,} ({observed_points/total_points*100:.2f}%)")
-    print(f"  - 缺失点数: {missing_points:,} ({missing_ratio:.2f}%)")
+    print(f"\nMissing Value Statistics:")
+    print(f"  - Total grid points: {total_points:,}")
+    print(f"  - Observed points: {observed_points:,} ({observed_points/total_points*100:.2f}%)")
+    print(f"  - Missing points: {missing_points:,} ({missing_ratio:.2f}%)")
     
-    # 温度统计
+    # Temperature statistics
     observed_values = tensor[mask]
-    print(f"\n温度统计 (Kelvin):")
-    print(f"  - 均值: {observed_values.mean():.2f} K")
-    print(f"  - 标准差: {observed_values.std():.2f} K")
-    print(f"  - 最小值: {observed_values.min():.2f} K")
-    print(f"  - 最大值: {observed_values.max():.2f} K")
-    print(f"  - 中位数: {np.median(observed_values):.2f} K")
+    print(f"\nTemperature Statistics (Kelvin):")
+    print(f"  - Mean: {observed_values.mean():.2f} K")
+    print(f"  - Std: {observed_values.std():.2f} K")
+    print(f"  - Min: {observed_values.min():.2f} K")
+    print(f"  - Max: {observed_values.max():.2f} K")
+    print(f"  - Median: {np.median(observed_values):.2f} K")
     
-    # 每天缺失值统计
+    # Missing values per day
     missing_per_day = []
     for t in range(T):
         day_mask = (tensor[:, :, t] != 0.0)
         missing_per_day.append((H * W - day_mask.sum()) / (H * W) * 100)
     
-    print(f"\n每日缺失值比率:")
-    print(f"  - 平均缺失率: {np.mean(missing_per_day):.2f}%")
-    print(f"  - 最小缺失率: {np.min(missing_per_day):.2f}% (第{np.argmin(missing_per_day)+1}天)")
-    print(f"  - 最大缺失率: {np.max(missing_per_day):.2f}% (第{np.argmax(missing_per_day)+1}天)")
+    print(f"\nDaily Missing Value Ratios:")
+    print(f"  - Average missing rate: {np.mean(missing_per_day):.2f}%")
+    print(f"  - Min missing rate: {np.min(missing_per_day):.2f}% (Day {np.argmin(missing_per_day)+1})")
+    print(f"  - Max missing rate: {np.max(missing_per_day):.2f}% (Day {np.argmax(missing_per_day)+1})")
 
 
 def main():
-    """主函数：训练和评估GP模型"""
+    """Main function: Train and evaluate GP model"""
     start_time = time.time()
     experiment_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    print_section_header("实验配置", width=80)
-    print(f"实验时间: {experiment_time}")
-    print(f"随机种子: 42")
+    print_section_header("Experiment Configuration", width=80)
+    print(f"Experiment Time: {experiment_time}")
+    print(f"Random Seed: 42")
     
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"计算设备: {device}")
+    print(f"Computing Device: {device}")
     if device.type == "cuda":
-        print(f"  - GPU名称: {torch.cuda.get_device_name(0)}")
-        print(f"  - GPU内存: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+        print(f"  - GPU Name: {torch.cuda.get_device_name(0)}")
+        print(f"  - GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
     
-    # 检查依赖库
-    print("\n依赖库检查:")
+    # Check dependencies
+    print("\nDependency Check:")
     try:
         import gpytorch
         print(f"  ✅ GPyTorch: {gpytorch.__version__}")
     except ImportError:
-        print("  ❌ 错误: 需要安装 gpytorch")
-        print("  请运行: pip install gpytorch")
+        print("  ❌ Error: gpytorch is required")
+        print("  Please run: pip install gpytorch")
         return
     
     try:
         import numpy as np
         print(f"  ✅ NumPy: {np.__version__}")
     except ImportError:
-        print("  ❌ NumPy未安装")
+        print("  ❌ NumPy not installed")
         return
     
-    # 加载数据
-    print_section_header("数据加载")
+    # Load data
+    print_section_header("Data Loading")
     data_path = "modis_aug_data/MODIS_Aug.mat"
-    print(f"数据路径: {data_path}")
+    print(f"Data Path: {data_path}")
     
-    print("\n加载训练数据...")
+    print("\nLoading training data...")
     train_tensor = load_modis_tensor(data_path, "training_tensor")
-    print_data_statistics(train_tensor, "训练集")
+    print_data_statistics(train_tensor, "Training Set")
     
-    print("\n加载测试数据...")
+    print("\nLoading test data...")
     test_tensor = load_modis_tensor(data_path, "test_tensor")
-    print_data_statistics(test_tensor, "测试集")
+    print_data_statistics(test_tensor, "Test Set")
     
-    # 创建数据集（point模式）
-    print_section_header("数据预处理")
-    print("转换为点数据格式 (lat, lon, time) → temperature")
+    # Create dataset (point mode)
+    print_section_header("Data Preprocessing")
+    print("Converting to point data format (lat, lon, time) -> temperature")
     
-    print("\n创建训练数据集...")
+    print("\nCreating training dataset...")
     train_dataset = MODISDataset(train_tensor, mode="point")
-    print(f"  - 训练观测点数: {len(train_dataset):,}")
+    print(f"  - Training observed points: {len(train_dataset):,}")
     
-    print("\n创建测试数据集...")
+    print("\nCreating test dataset...")
     test_dataset = MODISDataset(test_tensor, mode="point")
-    print(f"  - 测试观测点数: {len(test_dataset):,}")
+    print(f"  - Test observed points: {len(test_dataset):,}")
     
-    # 准备训练数据
-    print("\n提取训练数据...")
+    # Prepare training data
+    print("\nExtracting training data...")
     X_train = np.array([train_dataset[i][0].numpy() for i in range(len(train_dataset))])
     y_train = np.array([train_dataset[i][1].numpy() for i in range(len(train_dataset))])
     
-    print(f"  - 输入特征维度: {X_train.shape}")
-    print(f"    * 特征1 (纬度): 范围 [{X_train[:, 0].min():.2f}, {X_train[:, 0].max():.2f}]")
-    print(f"    * 特征2 (经度): 范围 [{X_train[:, 1].min():.2f}, {X_train[:, 1].max():.2f}]")
-    print(f"    * 特征3 (时间): 范围 [{X_train[:, 2].min():.0f}, {X_train[:, 2].max():.0f}] 天")
-    print(f"  - 目标变量维度: {y_train.shape}")
-    print(f"    * 温度范围: [{y_train.min():.2f}, {y_train.max():.2f}] K")
-    print(f"    * 温度均值: {y_train.mean():.2f} K")
-    print(f"    * 温度标准差: {y_train.std():.2f} K")
+    print(f"  - Input feature dimensions: {X_train.shape}")
+    print(f"    * Feature 1 (Lat): Range [{X_train[:, 0].min():.2f}, {X_train[:, 0].max():.2f}]")
+    print(f"    * Feature 2 (Lon): Range [{X_train[:, 1].min():.2f}, {X_train[:, 1].max():.2f}]")
+    print(f"    * Feature 3 (Time): Range [{X_train[:, 2].min():.0f}, {X_train[:, 2].max():.0f}] days")
+    print(f"  - Target variable dimensions: {y_train.shape}")
+    print(f"    * Temperature range: [{y_train.min():.2f}, {y_train.max():.2f}] K")
+    print(f"    * Mean temperature: {y_train.mean():.2f} K")
+    print(f"    * Temperature Std: {y_train.std():.2f} K")
     
-    # 准备测试数据
-    print("\n提取测试数据...")
+    # Prepare test data
+    print("\nExtracting test data...")
     X_test = np.array([test_dataset[i][0].numpy() for i in range(len(test_dataset))])
     y_test = np.array([test_dataset[i][1].numpy() for i in range(len(test_dataset))])
     
-    print(f"  - 输入特征维度: {X_test.shape}")
-    print(f"    * 特征1 (纬度): 范围 [{X_test[:, 0].min():.2f}, {X_test[:, 0].max():.2f}]")
-    print(f"    * 特征2 (经度): 范围 [{X_test[:, 1].min():.2f}, {X_test[:, 1].max():.2f}]")
-    print(f"    * 特征3 (时间): 范围 [{X_test[:, 2].min():.0f}, {X_test[:, 2].max():.0f}] 天")
-    print(f"  - 目标变量维度: {y_test.shape}")
-    print(f"    * 温度范围: [{y_test.min():.2f}, {y_test.max():.2f}] K")
-    print(f"    * 温度均值: {y_test.mean():.2f} K")
-    print(f"    * 温度标准差: {y_test.std():.2f} K")
+    print(f"  - Input feature dimensions: {X_test.shape}")
+    print(f"    * Feature 1 (Lat): Range [{X_test[:, 0].min():.2f}, {X_test[:, 0].max():.2f}]")
+    print(f"    * Feature 2 (Lon): Range [{X_test[:, 1].min():.2f}, {X_test[:, 1].max():.2f}]")
+    print(f"    * Feature 3 (Time): Range [{X_test[:, 2].min():.0f}, {X_test[:, 2].max():.0f}] days")
+    print(f"  - Target variable dimensions: {y_test.shape}")
+    print(f"    * Temperature range: [{y_test.min():.2f}, {y_test.max():.2f}] K")
+    print(f"    * Mean temperature: {y_test.mean():.2f} K")
+    print(f"    * Temperature Std: {y_test.std():.2f} K")
     
-    # 转换为tensor
-    print("\n转换为PyTorch张量...")
+    # Convert to tensor
+    print("\nConverting to PyTorch tensors...")
     X_train = torch.FloatTensor(X_train).to(device)
     y_train = torch.FloatTensor(y_train).to(device)
     X_test = torch.FloatTensor(X_test).to(device)
     y_test_np = y_test.copy()
-    print(f"  - 数据类型: {X_train.dtype}")
-    print(f"  - 设备: {device}")
+    print(f"  - Data Type: {X_train.dtype}")
+    print(f"  - Device: {device}")
     
-    # 配置模型
-    print_section_header("模型配置")
+    # Configure model
+    print_section_header("Model Configuration")
     config = GPSTConfig(
-        kernel_space="matern32",  # 空间核：Matern 3/2
-        kernel_time="matern32",   # 时间核：Matern 3/2
-        num_inducing=500,         # 诱导点数量（控制模型复杂度）
-        lr=0.01,                  # 学习率
-        num_epochs=50,            # 训练轮数
-        batch_size=1000           # 批大小
+        kernel_space="matern32",  # Spatial kernel: Matern 3/2
+        kernel_time="matern32",   # Temporal kernel: Matern 3/2
+        num_inducing=500,         # Number of inducing points (controls model complexity)
+        lr=0.01,                  # Learning rate
+        num_epochs=50,            # Number of epochs
+        batch_size=1000           # Batch size
     )
     
-    print("模型超参数:")
-    print(f"  - 空间核函数: {config.kernel_space} (Matern 3/2)")
-    print(f"  - 时间核函数: {config.kernel_time} (Matern 3/2)")
-    print(f"  - 诱导点数量: {config.num_inducing}")
-    print(f"  - 学习率: {config.lr}")
-    print(f"  - 训练轮数: {config.num_epochs}")
-    print(f"  - 批大小: {config.batch_size}")
+    print("Model Hyperparameters:")
+    print(f"  - Spatial Kernel: {config.kernel_space} (Matern 3/2)")
+    print(f"  - Temporal Kernel: {config.kernel_time} (Matern 3/2)")
+    print(f"  - Number of Inducing Points: {config.num_inducing}")
+    print(f"  - Learning Rate: {config.lr}")
+    print(f"  - Epochs: {config.num_epochs}")
+    print(f"  - Batch Size: {config.batch_size}")
     
-    print("\n创建诱导点...")
-    # 创建诱导点（使用训练数据的一个子集）
+    print("\nCreating inducing points...")
+    # Create inducing points (using a subset of training data)
     from lstinterp.models.gp_st import create_inducing_points
-    n_space = 15  # 15×15 = 225 个空间点
-    n_time = 10   # 10 个时间点
-    print(f"  - 空间网格: {n_space}×{n_space} = {n_space**2} 个点")
-    print(f"  - 时间点: {n_time} 个点")
-    print(f"  - 理论诱导点总数: {n_space**2 * n_time:,} 个点")
+    n_space = 15  # 15x15 = 225 spatial points
+    n_time = 10   # 10 time points
+    print(f"  - Spatial Grid: {n_space}x{n_space} = {n_space**2} points")
+    print(f"  - Time Points: {n_time} points")
+    print(f"  - Theoretical Total Inducing Points: {n_space**2 * n_time:,} points")
     
     inducing_points = create_inducing_points(
         n_space=n_space,
         n_time=n_time,
         normalize=True
-    ).float().to(device)  # 转换为float32以匹配训练数据
+    ).float().to(device)  # Convert to float32 to match training data
     
-    print(f"  - 实际诱导点数量: {len(inducing_points):,}")
+    print(f"  - Actual Inducing Points: {len(inducing_points):,}")
     
-    # 如果诱导点数量超过配置，使用随机采样
+    # If inducing points exceed config, randomly sample
     if len(inducing_points) > config.num_inducing:
-        print(f"  - 诱导点过多，随机采样至 {config.num_inducing} 个")
+        print(f"  - Too many inducing points, random sampling to {config.num_inducing}")
         indices = torch.randperm(len(inducing_points))[:config.num_inducing]
         inducing_points = inducing_points[indices]
-        print(f"  - 最终诱导点数量: {len(inducing_points)}")
+        print(f"  - Final Inducing Points: {len(inducing_points)}")
     else:
-        print(f"  - 使用全部诱导点: {len(inducing_points)}")
+        print(f"  - Using all inducing points: {len(inducing_points)}")
     
-    print("\n创建模型...")
+    print("\nCreating model...")
     model = GPSTModel(inducing_points, config).to(device)
-    model = model.float()  # 确保模型也是float32
+    model = model.float()  # Ensure model is also float32
     
-    # 计算模型参数数量
+    # Calculate model parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"  - 模型参数总数: {total_params:,}")
-    print(f"  - 可训练参数: {trainable_params:,}")
+    print(f"  - Total Parameters: {total_params:,}")
+    print(f"  - Trainable Parameters: {trainable_params:,}")
     
-    # 模型结构说明
-    print("\n模型结构:")
-    print("  - GP类型: Sparse Variational GP (SVGP)")
-    print("  - 核函数: 时空可分核 k(x, x') = k_space(lat, lon) × k_time(t)")
-    print("  - 变分分布: CholeskyVariationalDistribution")
-    print("  - 变分策略: VariationalStrategy (learn_inducing_locations=True)")
-    print("  - 均值函数: ConstantMean")
-    print("  - 似然函数: GaussianLikelihood")
+    # Model structure description
+    print("\nModel Structure:")
+    print("  - GP Type: Sparse Variational GP (SVGP)")
+    print("  - Kernel: Separable Spatio-Temporal Kernel k(x, x') = k_space(lat, lon) * k_time(t)")
+    print("  - Variational Distribution: CholeskyVariationalDistribution")
+    print("  - Variational Strategy: VariationalStrategy (learn_inducing_locations=True)")
+    print("  - Mean Function: ConstantMean")
+    print("  - Likelihood: GaussianLikelihood")
     
-    # 训练
-    print_section_header("模型训练")
+    # Training
+    print_section_header("Model Training")
     model.train()
     model.likelihood.train()
     
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
-    print(f"优化器: Adam")
-    print(f"  - 学习率: {config.lr}")
+    print(f"Optimizer: Adam")
+    print(f"  - Learning Rate: {config.lr}")
     
-    # 使用marginal log likelihood作为损失
-    # VariationalELBO需要接收GP对象（model.gp），而不是包装器
+    # Use marginal log likelihood as loss
+    # VariationalELBO requires the GP object (model.gp), not the wrapper
     mll = gpytorch.mlls.VariationalELBO(
         model.likelihood, 
-        model.gp,  # 使用GP对象而不是包装器
+        model.gp,  # Use GP object instead of wrapper
         num_data=len(X_train)
     )
-    print(f"损失函数: Variational ELBO")
-    print(f"  - 数据量: {len(X_train):,} 个点")
+    print(f"Loss Function: Variational ELBO")
+    print(f"  - Data Points: {len(X_train):,}")
     
     best_loss = float('inf')
     best_model_state = None
-    best_epoch = 1  # 初始化为第一个epoch
+    best_epoch = 1  # Initialize to first epoch
     train_losses = []
     training_start_time = time.time()
     
-    print(f"\n开始训练 ({config.num_epochs} 个epoch)...")
+    print(f"\nStarting Training ({config.num_epochs} epochs)...")
     print("-" * 80)
-    print(f"{'Epoch':<8} {'Loss':<15} {'最佳Loss':<15} {'时间':<10}")
+    print(f"{'Epoch':<8} {'Loss':<15} {'Best Loss':<15} {'Time':<10}")
     print("-" * 80)
     
     for epoch in range(config.num_epochs):
@@ -298,12 +298,12 @@ def main():
         model.train()
         model.likelihood.train()
         
-        # 批量训练（如果数据量大）
+        # Batch training (if data is large)
         epoch_loss = 0
         n_batches = 0
         
         if len(X_train) > config.batch_size:
-            # 随机打乱
+            # Shuffle
             indices = torch.randperm(len(X_train))
             n_batches_total = (len(X_train) + config.batch_size - 1) // config.batch_size
             
@@ -313,7 +313,7 @@ def main():
                 y_batch = y_train[batch_indices]
                 
                 optimizer.zero_grad()
-                output = model.gp(X_batch)  # 直接使用GP对象
+                output = model.gp(X_batch)  # Use GP object directly
                 loss = -mll(output, y_batch)
                 loss.backward()
                 optimizer.step()
@@ -322,7 +322,7 @@ def main():
                 n_batches += 1
         else:
             optimizer.zero_grad()
-            output = model.gp(X_train)  # 直接使用GP对象
+            output = model.gp(X_train)  # Use GP object directly
             loss = -mll(output, y_train)
             loss.backward()
             optimizer.step()
@@ -334,46 +334,46 @@ def main():
         train_losses.append(avg_loss)
         epoch_time = time.time() - epoch_start_time
         
-        # 保存最佳模型
+        # Save best model
         if avg_loss < best_loss:
             best_loss = avg_loss
             best_model_state = model.state_dict().copy()
             best_epoch = epoch + 1
         
-        # 每10个epoch或最后一个epoch打印一次
+        # Print every 10 epochs or last epoch
         if (epoch + 1) % 10 == 0 or (epoch + 1) == config.num_epochs:
             status = "⭐" if avg_loss == best_loss else " "
             print(f"{epoch+1:<8} {avg_loss:<15.4f} {best_loss:<15.4f} {epoch_time:<10.2f}s {status}")
     
     training_time = time.time() - training_start_time
     print("-" * 80)
-    print(f"训练完成！")
-    print(f"  - 总训练时间: {training_time:.2f} 秒 ({training_time/60:.2f} 分钟)")
-    print(f"  - 最佳Loss: {best_loss:.4f} (Epoch {best_epoch})")
-    print(f"  - 最终Loss: {avg_loss:.4f}")
-    print(f"  - 平均每epoch时间: {training_time/config.num_epochs:.2f} 秒")
+    print(f"Training Completed!")
+    print(f"  - Total Training Time: {training_time:.2f} s ({training_time/60:.2f} min)")
+    print(f"  - Best Loss: {best_loss:.4f} (Epoch {best_epoch})")
+    print(f"  - Final Loss: {avg_loss:.4f}")
+    print(f"  - Avg Time per Epoch: {training_time/config.num_epochs:.2f} s")
     
-    # 加载最佳模型
+    # Load best model
     if best_model_state is not None:
         model.load_state_dict(best_model_state)
-        print(f"\n已加载最佳模型 (Epoch {best_epoch}, Loss={best_loss:.4f})")
+        print(f"\nLoaded Best Model (Epoch {best_epoch}, Loss={best_loss:.4f})")
     
-    # 评估
-    print_section_header("模型评估")
+    # Evaluation
+    print_section_header("Model Evaluation")
     evaluation_start_time = time.time()
     
     model.eval()
     model.likelihood.eval()
     
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
-        # 分批预测（如果测试数据量大）
+        # Batch prediction (if test data is large)
         pred_mean_list = []
         pred_std_list = []
         
         batch_size = 1000
         for i in range(0, len(X_test), batch_size):
             X_batch = X_test[i:i+batch_size]
-            output = model.gp(X_batch)  # 直接使用GP对象
+            output = model.gp(X_batch)  # Use GP object directly
             pred_dist = model.likelihood(output)
             
             pred_mean_list.append(pred_dist.mean.cpu().numpy())
@@ -383,16 +383,16 @@ def main():
         y_pred_std = np.concatenate(pred_std_list)
     
     evaluation_time = time.time() - evaluation_start_time
-    print(f"预测完成 (耗时: {evaluation_time:.2f} 秒)")
+    print(f"Prediction Completed (Time: {evaluation_time:.2f} s)")
     
-    # 计算指标
-    print("\n计算评估指标...")
+    # Calculate metrics
+    print("\nCalculating evaluation metrics...")
     reg_metrics = compute_regression_metrics(y_test_np, y_pred_mean)
     prob_metrics = compute_probabilistic_metrics(y_test_np, y_pred_mean, y_pred_std)
     
     all_metrics = {**reg_metrics, **prob_metrics}
     
-    # 添加训练信息到结果
+    # Add experiment info to results
     all_metrics["experiment_info"] = {
         "experiment_time": experiment_time,
         "random_seed": 42,
@@ -420,74 +420,74 @@ def main():
     }
     
     print("\n" + "=" * 80)
-    print("  评估结果")
+    print("  Evaluation Results")
     print("=" * 80)
     
-    # 回归指标
-    print("\n【回归指标】")
-    print(f"  {'指标':<30} {'值':<15} {'说明':<30}")
+    # Regression Metrics
+    print("\n[Regression Metrics]")
+    print(f"  {'Metric':<30} {'Value':<15} {'Description':<30}")
     print("-" * 75)
-    print(f"  {'RMSE (Root Mean Squared Error)':<30} {reg_metrics['rmse']:<15.4f} {'越小越好，单位: Kelvin'}")
-    print(f"  {'MAE (Mean Absolute Error)':<30} {reg_metrics['mae']:<15.4f} {'越小越好，单位: Kelvin'}")
-    print(f"  {'R² (Coefficient of Determination)':<30} {reg_metrics['r2']:<15.4f} {'越大越好，范围: (-∞, 1]'}")
-    print(f"  {'MAPE (Mean Absolute Percentage Error)':<30} {reg_metrics['mape']:<15.4f} {'越小越好，单位: %'}")
+    print(f"  {'RMSE (Root Mean Squared Error)':<30} {reg_metrics['rmse']:<15.4f} {'Lower is better, Unit: Kelvin'}")
+    print(f"  {'MAE (Mean Absolute Error)':<30} {reg_metrics['mae']:<15.4f} {'Lower is better, Unit: Kelvin'}")
+    print(f"  {'R² (Coefficient of Determination)':<30} {reg_metrics['r2']:<15.4f} {'Higher is better, Range: (-inf, 1]'}")
+    print(f"  {'MAPE (Mean Absolute Percentage Error)':<30} {reg_metrics['mape']:<15.4f} {'Lower is better, Unit: %'}")
     
-    # 概率指标
-    print("\n【概率预测指标】")
-    print(f"  {'指标':<30} {'值':<15} {'说明':<30}")
+    # Probabilistic Metrics
+    print("\n[Probabilistic Metrics]")
+    print(f"  {'Metric':<30} {'Value':<15} {'Description':<30}")
     print("-" * 75)
-    print(f"  {'CRPS (Continuous Ranked Probability Score)':<30} {prob_metrics['crps']:<15.4f} {'越小越好，单位: Kelvin'}")
-    print(f"  {'Coverage (90% Prediction Interval)':<30} {prob_metrics['coverage_90']:<15.4f} {'目标: 0.90'}")
-    print(f"  {'Interval Width (90%)':<30} {prob_metrics['interval_width_90']:<15.4f} {'越小越好，单位: Kelvin'}")
-    print(f"  {'Calibration Error':<30} {prob_metrics['calibration_error']:<15.4f} {'越小越好，衡量校准度'}")
+    print(f"  {'CRPS (Continuous Ranked Probability Score)':<30} {prob_metrics['crps']:<15.4f} {'Lower is better, Unit: Kelvin'}")
+    print(f"  {'Coverage (90% Prediction Interval)':<30} {prob_metrics['coverage_90']:<15.4f} {'Target: 0.90'}")
+    print(f"  {'Interval Width (90%)':<30} {prob_metrics['interval_width_90']:<15.4f} {'Lower is better, Unit: Kelvin'}")
+    print(f"  {'Calibration Error':<30} {prob_metrics['calibration_error']:<15.4f} {'Lower is better, measures calibration'}")
     
-    # 预测统计
-    print("\n【预测统计】")
-    print(f"  预测均值:")
-    print(f"    - 范围: [{y_pred_mean.min():.2f}, {y_pred_mean.max():.2f}] K")
-    print(f"    - 均值: {y_pred_mean.mean():.2f} K")
-    print(f"    - 标准差: {y_pred_mean.std():.2f} K")
+    # Prediction Statistics
+    print("\n[Prediction Statistics]")
+    print(f"  Predicted Mean:")
+    print(f"    - Range: [{y_pred_mean.min():.2f}, {y_pred_mean.max():.2f}] K")
+    print(f"    - Mean: {y_pred_mean.mean():.2f} K")
+    print(f"    - Std: {y_pred_mean.std():.2f} K")
     
-    print(f"\n  真实值:")
-    print(f"    - 范围: [{y_test_np.min():.2f}, {y_test_np.max():.2f}] K")
-    print(f"    - 均值: {y_test_np.mean():.2f} K")
-    print(f"    - 标准差: {y_test_np.std():.2f} K")
+    print(f"\n  True Values:")
+    print(f"    - Range: [{y_test_np.min():.2f}, {y_test_np.max():.2f}] K")
+    print(f"    - Mean: {y_test_np.mean():.2f} K")
+    print(f"    - Std: {y_test_np.std():.2f} K")
     
-    print(f"\n  预测不确定性 (标准差):")
-    print(f"    - 范围: [{y_pred_std.min():.2f}, {y_pred_std.max():.2f}] K")
-    print(f"    - 均值: {y_pred_std.mean():.2f} K")
-    print(f"    - 中位数: {np.median(y_pred_std):.2f} K")
+    print(f"\n  Prediction Uncertainty (Std):")
+    print(f"    - Range: [{y_pred_std.min():.2f}, {y_pred_std.max():.2f}] K")
+    print(f"    - Mean: {y_pred_std.mean():.2f} K")
+    print(f"    - Median: {np.median(y_pred_std):.2f} K")
     
-    # 误差分析
+    # Error Analysis
     errors = y_test_np - y_pred_mean
-    print(f"\n【误差分析】")
-    print(f"  残差 (真实值 - 预测值):")
-    print(f"    - 均值: {errors.mean():.2f} K (接近0表示无偏)")
-    print(f"    - 标准差: {errors.std():.2f} K")
-    print(f"    - 范围: [{errors.min():.2f}, {errors.max():.2f}] K")
-    print(f"    - 中位数: {np.median(errors):.2f} K")
+    print(f"\n[Error Analysis]")
+    print(f"  Residuals (True - Predicted):")
+    print(f"    - Mean: {errors.mean():.2f} K (Near 0 indicates unbiased)")
+    print(f"    - Std: {errors.std():.2f} K")
+    print(f"    - Range: [{errors.min():.2f}, {errors.max():.2f}] K")
+    print(f"    - Median: {np.median(errors):.2f} K")
     
-    # 覆盖率分析
+    # Coverage Analysis
     coverage = prob_metrics['coverage_90']
     target_coverage = 0.90
     coverage_error = abs(coverage - target_coverage)
-    print(f"\n【不确定性校准】")
-    print(f"  90%预测区间覆盖率: {coverage:.4f} (目标: {target_coverage})")
+    print(f"\n[Uncertainty Calibration]")
+    print(f"  90% Prediction Interval Coverage: {coverage:.4f} (Target: {target_coverage})")
     if coverage_error < 0.05:
-        print(f"  ✅ 校准良好 (误差 < 5%)")
+        print(f"  ✅ Well Calibrated (Error < 5%)")
     elif coverage_error < 0.10:
-        print(f"  ⚠️  校准尚可 (误差 < 10%)")
+        print(f"  ⚠️  Acceptable Calibration (Error < 10%)")
     else:
-        print(f"  ❌ 校准较差 (误差 >= 10%)")
+        print(f"  ❌ Poor Calibration (Error >= 10%)")
     
-    # 保存结果
-    print_section_header("保存结果")
+    # Save Results
+    print_section_header("Save Results")
     results_path = OUTPUT_DIR / "results" / "gp_results.json"
     with open(results_path, "w") as f:
         json.dump(all_metrics, f, indent=2, ensure_ascii=False)
-    print(f"✅ 评估结果已保存: {results_path}")
+    print(f"✅ Evaluation results saved: {results_path}")
     
-    # 保存模型
+    # Save Model
     model_path = OUTPUT_DIR / "models" / "gp_model.pth"
     torch.save({
         'model_state_dict': model.state_dict(),
@@ -495,10 +495,10 @@ def main():
         'inducing_points': inducing_points.cpu(),
         'experiment_info': all_metrics["experiment_info"]
     }, model_path)
-    print(f"✅ 模型已保存: {model_path}")
-    print(f"  - 模型大小: {model_path.stat().st_size / 1024 / 1024:.2f} MB")
+    print(f"✅ Model saved: {model_path}")
+    print(f"  - Model Size: {model_path.stat().st_size / 1024 / 1024:.2f} MB")
     
-    # 保存训练损失曲线
+    # Save Training Loss Curve
     loss_curve_path = OUTPUT_DIR / "results" / "gp_training_losses.json"
     with open(loss_curve_path, "w") as f:
         json.dump({
@@ -507,35 +507,35 @@ def main():
             "best_epoch": best_epoch,
             "best_loss": float(best_loss)
         }, f, indent=2)
-    print(f"✅ 训练损失曲线已保存: {loss_curve_path}")
+    print(f"✅ Training loss curve saved: {loss_curve_path}")
     
-    # 可视化
-    print("\n生成可视化图表...")
+    # Visualization
+    print("\nGenerating Visualizations...")
     scatter_path = OUTPUT_DIR / "figures" / "gp_scatter.png"
     residuals_path = OUTPUT_DIR / "figures" / "gp_residuals.png"
     
     plot_prediction_scatter(y_test_np, y_pred_mean, save_path=str(scatter_path))
-    print(f"✅ 预测散点图已保存: {scatter_path}")
+    print(f"✅ Prediction scatter plot saved: {scatter_path}")
     
     plot_residuals(y_test_np, y_pred_mean, save_path=str(residuals_path))
-    print(f"✅ 残差图已保存: {residuals_path}")
+    print(f"✅ Residuals plot saved: {residuals_path}")
     
-    # 总结
+    # Summary
     total_time = time.time() - start_time
-    print_section_header("实验完成")
-    print(f"总耗时: {total_time:.2f} 秒 ({total_time/60:.2f} 分钟)")
-    print(f"  - 数据加载和预处理: {training_start_time - start_time:.2f} 秒")
-    print(f"  - 模型训练: {training_time:.2f} 秒")
-    print(f"  - 模型评估: {evaluation_time:.2f} 秒")
-    print(f"  - 结果保存和可视化: {total_time - evaluation_time - training_time - (training_start_time - start_time):.2f} 秒")
+    print_section_header("Experiment Completed")
+    print(f"Total Time: {total_time:.2f} s ({total_time/60:.2f} min)")
+    print(f"  - Data Loading & Preprocessing: {training_start_time - start_time:.2f} s")
+    print(f"  - Model Training: {training_time:.2f} s")
+    print(f"  - Model Evaluation: {evaluation_time:.2f} s")
+    print(f"  - Saving & Visualization: {total_time - evaluation_time - training_time - (training_start_time - start_time):.2f} s")
     
-    print(f"\n主要指标总结:")
+    print(f"\nMain Metrics Summary:")
     print(f"  - R²: {reg_metrics['r2']:.4f}")
     print(f"  - RMSE: {reg_metrics['rmse']:.4f} K")
     print(f"  - CRPS: {prob_metrics['crps']:.4f} K")
-    print(f"  - 覆盖率(90%): {prob_metrics['coverage_90']:.4f}")
+    print(f"  - Coverage (90%): {prob_metrics['coverage_90']:.4f}")
     
-    print(f"\n所有结果文件:")
+    print(f"\nAll Result Files:")
     print(f"  📄 {results_path}")
     print(f"  📄 {loss_curve_path}")
     print(f"  💾 {model_path}")
@@ -545,4 +545,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

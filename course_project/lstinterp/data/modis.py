@@ -58,7 +58,7 @@ class MODISDataset(Dataset):
             self.coords = np.stack([
                 lat_coords[lat_idx],
                 lon_coords[lon_idx],
-                t_idx.astype(np.float32)  # 时间索引
+                t_idx.astype(np.float32)  # Time index
             ], axis=1)
             
             if normalize_coords:

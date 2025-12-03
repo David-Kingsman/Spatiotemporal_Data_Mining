@@ -1,10 +1,10 @@
 """
-数据探索性分析（EDA）
+Exploratory Data Analysis (EDA)
 
-该脚本对MODIS数据进行全面的探索性分析：
-1. 统计摘要表（均值、标准差、分位数、缺失率）
-2. 空间相关性分析（半变异函数、空间自相关）
-3. 时间序列分析（自相关、趋势、季节性）
+This script performs comprehensive exploratory analysis on MODIS data:
+1. Statistical Summary Table (Mean, Std, Quantiles, Missing Rate)
+2. Spatial Correlation Analysis (Semi-variogram, Spatial Autocorrelation)
+3. Temporal Analysis (Autocorrelation, Trend, Seasonality)
 """
 
 import sys
@@ -19,20 +19,20 @@ from scipy.spatial.distance import pdist, squareform
 import json
 from datetime import datetime
 
-# 添加项目根目录到路径
+# Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from lstinterp.data import load_modis_tensor, MODISDataset
 
-# 输出目录
+# Output directory
 OUTPUT_DIR = project_root / "output"
 FIGURES_DIR = OUTPUT_DIR / "figures" / "eda"
 RESULTS_DIR = OUTPUT_DIR / "results" / "eda"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# 数据路径
+# Data path
 DATA_PATH = project_root / "modis_aug_data" / "MODIS_Aug.mat"
 
 plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans']
@@ -41,24 +41,24 @@ sns.set_style("whitegrid")
 
 
 def print_section_header(title):
-    """打印章节标题"""
+    """Print section header"""
     print("\n" + "=" * 80)
     print(f"  {title}")
     print("=" * 80)
 
 
 def compute_statistical_summary(train_tensor, test_tensor):
-    """计算统计摘要表"""
-    print_section_header("统计摘要表")
+    """Compute statistical summary table"""
+    print_section_header("Statistical Summary Table")
     
-    # 提取观测值（非0）
+    # Extract observed values (non-zero)
     train_mask = (train_tensor != 0)
     test_mask = (test_tensor != 0)
     
     train_values = train_tensor[train_mask]
     test_values = test_tensor[test_mask]
     
-    # 计算统计量
+    # Calculate statistics
     stats_dict = {
         'Dataset': ['Training', 'Test'],
         'Total_Pixels': [train_tensor.size, test_tensor.size],
@@ -79,25 +79,25 @@ def compute_statistical_summary(train_tensor, test_tensor):
     
     df = pd.DataFrame(stats_dict)
     
-    # 打印表格
-    print("\n数据统计摘要:")
+    # Print table
+    print("\nData Statistical Summary:")
     print(df.to_string(index=False, float_format='%.3f'))
     
-    # 保存为CSV和JSON
+    # Save as CSV and JSON
     csv_path = RESULTS_DIR / "statistical_summary.csv"
     json_path = RESULTS_DIR / "statistical_summary.json"
     
     df.to_csv(csv_path, index=False, float_format='%.4f')
-    print(f"\n✅ 统计摘要表已保存: {csv_path}")
+    print(f"\n✅ Statistical summary table saved: {csv_path}")
     
     with open(json_path, 'w') as f:
         json.dump(stats_dict, f, indent=2, ensure_ascii=False, default=str)
-    print(f"✅ 统计摘要JSON已保存: {json_path}")
+    print(f"✅ Statistical summary JSON saved: {json_path}")
     
-    # 绘制分布图
+    # Plot distributions
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
-    # 训练集分布
+    # Training data distribution
     axes[0, 0].hist(train_values, bins=50, alpha=0.7, color='blue', edgecolor='black')
     axes[0, 0].set_title('Training Data Distribution', fontsize=12, fontweight='bold')
     axes[0, 0].set_xlabel('Temperature (K)')
@@ -107,7 +107,7 @@ def compute_statistical_summary(train_tensor, test_tensor):
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
     
-    # 测试集分布
+    # Test data distribution
     axes[0, 1].hist(test_values, bins=50, alpha=0.7, color='green', edgecolor='black')
     axes[0, 1].set_title('Test Data Distribution', fontsize=12, fontweight='bold')
     axes[0, 1].set_xlabel('Temperature (K)')
@@ -117,13 +117,13 @@ def compute_statistical_summary(train_tensor, test_tensor):
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
     
-    # 箱线图对比
+    # Boxplot comparison
     axes[1, 0].boxplot([train_values, test_values], labels=['Training', 'Test'])
     axes[1, 0].set_title('Temperature Distribution Comparison', fontsize=12, fontweight='bold')
     axes[1, 0].set_ylabel('Temperature (K)')
     axes[1, 0].grid(True, alpha=0.3)
     
-    # Q-Q图
+    # Q-Q plot
     stats.probplot(train_values, dist="norm", plot=axes[1, 1])
     axes[1, 1].set_title('Q-Q Plot (Training Data)', fontsize=12, fontweight='bold')
     axes[1, 1].grid(True, alpha=0.3)
@@ -132,18 +132,18 @@ def compute_statistical_summary(train_tensor, test_tensor):
     fig_path = FIGURES_DIR / "statistical_summary.png"
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ 统计摘要图已保存: {fig_path}")
+    print(f"✅ Statistical summary plot saved: {fig_path}")
     
     return stats_dict
 
 
 def analyze_daily_statistics(tensor, dataset_name="Training"):
-    """分析每日统计"""
-    print_section_header(f"{dataset_name} - 每日统计分析")
+    """Analyze daily statistics"""
+    print_section_header(f"{dataset_name} - Daily Statistical Analysis")
     
     H, W, T = tensor.shape
     
-    # 每日统计
+    # Daily stats
     daily_stats = {
         'Day': list(range(1, T + 1)),
         'Mean_Temp(K)': [],
@@ -175,29 +175,29 @@ def analyze_daily_statistics(tensor, dataset_name="Training"):
     
     df = pd.DataFrame(daily_stats)
     
-    # 保存
+    # Save
     csv_path = RESULTS_DIR / f"{dataset_name.lower()}_daily_stats.csv"
     df.to_csv(csv_path, index=False, float_format='%.4f')
-    print(f"✅ 每日统计已保存: {csv_path}")
+    print(f"✅ Daily statistics saved: {csv_path}")
     
-    # 可视化
+    # Visualize
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
-    # 日均温度
+    # Daily Mean Temperature
     axes[0, 0].plot(df['Day'], df['Mean_Temp(K)'], marker='o', linewidth=2, markersize=4)
     axes[0, 0].set_title('Daily Mean Temperature', fontsize=12, fontweight='bold')
     axes[0, 0].set_xlabel('Day')
     axes[0, 0].set_ylabel('Mean Temperature (K)')
     axes[0, 0].grid(True, alpha=0.3)
     
-    # 日缺失率
+    # Daily Missing Rate
     axes[0, 1].plot(df['Day'], df['Missing_Rate(%)'], marker='s', color='red', linewidth=2, markersize=4)
     axes[0, 1].set_title('Daily Missing Rate', fontsize=12, fontweight='bold')
     axes[0, 1].set_xlabel('Day')
     axes[0, 1].set_ylabel('Missing Rate (%)')
     axes[0, 1].grid(True, alpha=0.3)
     
-    # 温度范围
+    # Temperature Range
     axes[1, 0].fill_between(df['Day'], df['Min_Temp(K)'], df['Max_Temp(K)'], 
                             alpha=0.3, label='Temperature Range')
     axes[1, 0].plot(df['Day'], df['Mean_Temp(K)'], marker='o', linewidth=2, 
@@ -208,7 +208,7 @@ def analyze_daily_statistics(tensor, dataset_name="Training"):
     axes[1, 0].legend()
     axes[1, 0].grid(True, alpha=0.3)
     
-    # 观测点数
+    # Observed Pixels
     axes[1, 1].bar(df['Day'], df['Observed_Pixels'], alpha=0.7, color='green')
     axes[1, 1].set_title('Observed Pixels per Day', fontsize=12, fontweight='bold')
     axes[1, 1].set_xlabel('Day')
@@ -219,26 +219,26 @@ def analyze_daily_statistics(tensor, dataset_name="Training"):
     fig_path = FIGURES_DIR / f"{dataset_name.lower()}_daily_analysis.png"
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ 每日分析图已保存: {fig_path}")
+    print(f"✅ Daily analysis plot saved: {fig_path}")
     
     return df
 
 
 def analyze_spatial_correlation(tensor, sample_size=5000):
-    """分析空间相关性（半变异函数）"""
-    print_section_header("空间相关性分析")
+    """Analyze Spatial Correlation (Semi-variogram)"""
+    print_section_header("Spatial Correlation Analysis")
     
-    # 选择一个时间切片进行分析（第15天）
+    # Select a time slice for analysis (Day 15)
     H, W, T = tensor.shape
-    day_idx = T // 2  # 中间的一天
+    day_idx = T // 2  # Middle day
     day_data = tensor[:, :, day_idx]
     mask = (day_data != 0)
     
     if mask.sum() < 100:
-        print(f"⚠️  第{day_idx+1}天的观测点太少，跳过空间相关性分析")
+        print(f"⚠️  Too few observed points on Day {day_idx+1}, skipping spatial correlation analysis")
         return None
     
-    # 采样观测点（如果太多的话）
+    # Sample observed points (if too many)
     lat_indices, lon_indices = np.where(mask)
     if len(lat_indices) > sample_size:
         sample_indices = np.random.choice(len(lat_indices), sample_size, replace=False)
@@ -248,13 +248,13 @@ def analyze_spatial_correlation(tensor, sample_size=5000):
     values = day_data[lat_indices, lon_indices]
     coords = np.column_stack([lat_indices, lon_indices])
     
-    # 计算空间距离
+    # Calculate spatial distances
     distances = pdist(coords, metric='euclidean')
     
-    # 计算值的差异的平方
+    # Calculate squared differences of values
     value_diffs = pdist(values.reshape(-1, 1), metric='euclidean') ** 2
     
-    # 计算半变异函数（binning）
+    # Calculate semi-variogram (binning)
     max_dist = distances.max()
     n_bins = 30
     bins = np.linspace(0, max_dist, n_bins + 1)
@@ -268,17 +268,17 @@ def analyze_spatial_correlation(tensor, sample_size=5000):
             bin_centers.append((bins[i] + bins[i+1]) / 2)
             semivariances.append(value_diffs[bin_mask].mean() / 2)
     
-    # 可视化半变异函数
+    # Visualize semi-variogram
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     
-    # 半变异函数
+    # Semi-variogram
     axes[0].plot(bin_centers, semivariances, 'o-', linewidth=2, markersize=6, color='blue')
     axes[0].set_title('Semi-variogram (Day {})'.format(day_idx + 1), fontsize=12, fontweight='bold')
     axes[0].set_xlabel('Distance (pixels)')
     axes[0].set_ylabel('Semivariance')
     axes[0].grid(True, alpha=0.3)
     
-    # 空间温度分布
+    # Spatial Temperature Distribution
     im = axes[1].imshow(day_data, aspect='auto', origin='lower', cmap='jet_r')
     axes[1].set_title('Spatial Temperature Distribution (Day {})'.format(day_idx + 1), 
                       fontsize=12, fontweight='bold')
@@ -290,20 +290,20 @@ def analyze_spatial_correlation(tensor, sample_size=5000):
     fig_path = FIGURES_DIR / "spatial_correlation.png"
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ 空间相关性图已保存: {fig_path}")
+    print(f"✅ Spatial correlation plot saved: {fig_path}")
     
-    # 计算Moran's I（简化版，使用最近的邻居）
+    # Calculate Moran's I (simplified, using nearest neighbors)
     from scipy.spatial.distance import cdist
     
-    # 计算最近的k个邻居
+    # Calculate k nearest neighbors
     k = min(10, len(coords) - 1)
     dist_matrix = cdist(coords, coords)
     np.fill_diagonal(dist_matrix, np.inf)
     
-    # 找到k个最近邻居
+    # Find k nearest neighbors
     nearest_neighbors = np.argsort(dist_matrix, axis=1)[:, :k]
     
-    # 计算Moran's I
+    # Calculate Moran's I
     mean_val = values.mean()
     centered_values = values - mean_val
     numerator = 0
@@ -315,10 +315,10 @@ def analyze_spatial_correlation(tensor, sample_size=5000):
     
     morans_i = numerator / (k * denominator) if denominator > 0 else 0
     
-    print(f"\n空间自相关 (Moran's I近似值): {morans_i:.4f}")
-    print(f"  值接近1表示强正相关")
-    print(f"  值接近0表示无空间相关")
-    print(f"  值接近-1表示强负相关")
+    print(f"\nSpatial Autocorrelation (Approx. Moran's I): {morans_i:.4f}")
+    print(f"  Value near 1 indicates strong positive correlation")
+    print(f"  Value near 0 indicates no spatial correlation")
+    print(f"  Value near -1 indicates strong negative correlation")
     
     return {
         'bin_centers': bin_centers,
@@ -328,15 +328,15 @@ def analyze_spatial_correlation(tensor, sample_size=5000):
 
 
 def analyze_temporal_correlation(tensor):
-    """分析时间相关性"""
-    print_section_header("时间序列分析")
+    """Analyze Temporal Correlation"""
+    print_section_header("Time Series Analysis")
     
     H, W, T = tensor.shape
     
-    # 选择一个空间位置（中心点）进行时间序列分析
+    # Select a spatial location (center point) for time series analysis
     center_lat, center_lon = H // 2, W // 2
     
-    # 如果中心点有缺失，找最近的有观测的位置
+    # If center point is missing, find nearest observed location
     for offset in range(min(H, W) // 2):
         for lat_offset in [-offset, offset]:
             for lon_offset in [-offset, offset]:
@@ -344,7 +344,7 @@ def analyze_temporal_correlation(tensor):
                 lon_idx = center_lon + lon_offset
                 if 0 <= lat_idx < H and 0 <= lon_idx < W:
                     time_series = tensor[lat_idx, lon_idx, :]
-                    if (time_series != 0).sum() > T * 0.5:  # 至少50%的观测
+                    if (time_series != 0).sum() > T * 0.5:  # At least 50% observations
                         break
             else:
                 continue
@@ -357,19 +357,19 @@ def analyze_temporal_correlation(tensor):
     valid_mask = (time_series != 0)
     
     if valid_mask.sum() < 10:
-        print("⚠️  有效时间点太少，跳过时间序列分析")
+        print("⚠️  Too few valid time points, skipping time series analysis")
         return None
     
     valid_series = time_series[valid_mask]
     valid_days = np.where(valid_mask)[0] + 1
     
-    # 计算自相关
+    # Calculate Autocorrelation
     from scipy.signal import correlate
     
-    # 零均值化
+    # Zero-mean
     centered_series = valid_series - valid_series.mean()
     
-    # 计算自相关（最大lag为T//2）
+    # Calculate autocorrelation (max lag T//2)
     max_lag = min(len(centered_series) // 2, 15)
     autocorr = []
     lags = list(range(max_lag))
@@ -385,10 +385,10 @@ def analyze_temporal_correlation(tensor):
             else:
                 autocorr.append(0.0)
     
-    # 可视化
+    # Visualize
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
-    # 时间序列
+    # Time Series
     axes[0, 0].plot(valid_days, valid_series, marker='o', linewidth=2, markersize=4)
     axes[0, 0].set_title(f'Time Series at Location ({lat_idx}, {lon_idx})', 
                          fontsize=12, fontweight='bold')
@@ -396,7 +396,7 @@ def analyze_temporal_correlation(tensor):
     axes[0, 0].set_ylabel('Temperature (K)')
     axes[0, 0].grid(True, alpha=0.3)
     
-    # 自相关函数
+    # Autocorrelation Function
     axes[0, 1].stem(lags, autocorr, basefmt=' ', linefmt='blue', markerfmt='bo')
     axes[0, 1].axhline(y=0, color='r', linestyle='--', linewidth=1)
     axes[0, 1].set_title('Autocorrelation Function (ACF)', fontsize=12, fontweight='bold')
@@ -404,7 +404,7 @@ def analyze_temporal_correlation(tensor):
     axes[0, 1].set_ylabel('Autocorrelation')
     axes[0, 1].grid(True, alpha=0.3)
     
-    # 趋势分析（线性拟合）
+    # Trend Analysis (Linear Fit)
     if len(valid_days) > 1:
         slope, intercept, r_value, p_value, std_err = stats.linregress(valid_days, valid_series)
         axes[1, 0].plot(valid_days, valid_series, marker='o', linewidth=2, markersize=4, 
@@ -418,12 +418,12 @@ def analyze_temporal_correlation(tensor):
         axes[1, 0].legend()
         axes[1, 0].grid(True, alpha=0.3)
         
-        print(f"\n线性趋势分析:")
-        print(f"  斜率: {slope:.6f} K/day")
+        print(f"\nLinear Trend Analysis:")
+        print(f"  Slope: {slope:.6f} K/day")
         print(f"  R²: {r_value**2:.4f}")
         print(f"  p-value: {p_value:.4f}")
     
-    # 日差异分析
+    # Daily Difference Analysis
     if len(valid_series) > 1:
         daily_diffs = np.diff(valid_series)
         axes[1, 1].plot(valid_days[1:], daily_diffs, marker='o', linewidth=2, markersize=4, color='green')
@@ -433,17 +433,17 @@ def analyze_temporal_correlation(tensor):
         axes[1, 1].set_ylabel('Temperature Change (K)')
         axes[1, 1].grid(True, alpha=0.3)
         
-        print(f"\n日变化统计:")
-        print(f"  平均日变化: {daily_diffs.mean():.4f} K")
-        print(f"  日变化标准差: {daily_diffs.std():.4f} K")
-        print(f"  最大日增长: {daily_diffs.max():.4f} K")
-        print(f"  最大日下降: {daily_diffs.min():.4f} K")
+        print(f"\nDaily Change Statistics:")
+        print(f"  Mean Daily Change: {daily_diffs.mean():.4f} K")
+        print(f"  Daily Change Std: {daily_diffs.std():.4f} K")
+        print(f"  Max Daily Increase: {daily_diffs.max():.4f} K")
+        print(f"  Max Daily Decrease: {daily_diffs.min():.4f} K")
     
     plt.tight_layout()
     fig_path = FIGURES_DIR / "temporal_analysis.png"
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ 时间序列分析图已保存: {fig_path}")
+    print(f"✅ Time series analysis plot saved: {fig_path}")
     
     return {
         'lags': lags,
@@ -454,33 +454,33 @@ def analyze_temporal_correlation(tensor):
 
 
 def main():
-    """主函数"""
+    """Main function"""
     print("=" * 80)
-    print("  数据探索性分析（EDA）")
+    print("  Exploratory Data Analysis (EDA)")
     print("=" * 80)
     
-    # 加载数据
-    print("\n加载数据...")
+    # Load data
+    print("\nLoading data...")
     train_tensor = load_modis_tensor(str(DATA_PATH), key="training_tensor")
     test_tensor = load_modis_tensor(str(DATA_PATH), key="test_tensor")
     
-    print(f"训练数据形状: {train_tensor.shape}")
-    print(f"测试数据形状: {test_tensor.shape}")
+    print(f"Training data shape: {train_tensor.shape}")
+    print(f"Test data shape: {test_tensor.shape}")
     
-    # 1. 统计摘要
+    # 1. Statistical Summary
     stats_dict = compute_statistical_summary(train_tensor, test_tensor)
     
-    # 2. 每日统计分析
+    # 2. Daily Statistics Analysis
     train_daily = analyze_daily_statistics(train_tensor, "Training")
     test_daily = analyze_daily_statistics(test_tensor, "Test")
     
-    # 3. 空间相关性分析
+    # 3. Spatial Correlation Analysis
     spatial_corr = analyze_spatial_correlation(train_tensor)
     
-    # 4. 时间相关性分析
+    # 4. Temporal Correlation Analysis
     temporal_corr = analyze_temporal_correlation(train_tensor)
     
-    # 保存汇总结果
+    # Save summary results
     summary = {
         'analysis_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'statistical_summary': stats_dict,
@@ -491,17 +491,15 @@ def main():
     summary_path = RESULTS_DIR / "eda_summary.json"
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=2, ensure_ascii=False, default=str)
-    print(f"\n✅ EDA汇总结果已保存: {summary_path}")
+    print(f"\n✅ EDA summary results saved: {summary_path}")
     
     print("\n" + "=" * 80)
-    print("  EDA分析完成")
+    print("  EDA Completed")
     print("=" * 80)
-    print(f"\n所有结果已保存到:")
-    print(f"  - 图表: {FIGURES_DIR}")
-    print(f"  - 数据: {RESULTS_DIR}")
+    print(f"\nAll results saved to:")
+    print(f"  - Figures: {FIGURES_DIR}")
+    print(f"  - Data: {RESULTS_DIR}")
 
 
 if __name__ == "__main__":
     main()
-
-

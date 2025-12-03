@@ -1,10 +1,10 @@
 """
-高级可视化生成
+Generate Advanced Visualizations
 
-该脚本生成：
-1. 时间序列动画（GIF）
-2. 3D可视化（空间×时间）
-3. 交互式图表（可选，使用plotly）
+This script generates:
+1. Time Series Animations (GIF)
+2. 3D Visualizations (Spatial x Temporal)
+3. Interactive Charts (Optional, using plotly)
 """
 
 import sys
@@ -16,18 +16,18 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 from mpl_toolkits.mplot3d import Axes3D
 import json
 
-# 添加项目根目录到路径
+# Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from lstinterp.data import load_modis_tensor
 
-# 输出目录
+# Output directory
 OUTPUT_DIR = project_root / "output"
 FIGURES_DIR = OUTPUT_DIR / "figures" / "advanced"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
-# 数据路径
+# Data path
 DATA_PATH = project_root / "modis_aug_data" / "MODIS_Aug.mat"
 
 plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans']
@@ -35,30 +35,30 @@ plt.rcParams['axes.unicode_minus'] = False
 
 
 def generate_timeseries_animation(model_name="unet"):
-    """生成时间序列动画（GIF）"""
-    print(f"\n生成{model_name.upper()}时间序列动画...")
+    """Generate Time Series Animation (GIF)"""
+    print(f"\nGenerating {model_name.upper()} time series animation...")
     
-    # 加载预测数据
+    # Load prediction data
     pred_dir = OUTPUT_DIR / "figures" / "all_days"
     pred_mean_path = pred_dir / f"{model_name}_pred_mean.npy"
     true_path = pred_dir / f"{model_name}_true.npy"
     
     if not all(p.exists() for p in [pred_mean_path, true_path]):
-        print(f"⚠️  {model_name}模型的预测数据不存在，跳过")
+        print(f"⚠️  Prediction data for {model_name} not found, skipping")
         return None
     
     pred_mean = np.load(pred_mean_path)
     true_values = np.load(true_path)
     H, W, T = pred_mean.shape
     
-    # 创建动画
+    # Create animation
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     
-    # 确定颜色范围
+    # Determine color range
     vmin = np.nanmin([np.nanmin(pred_mean), np.nanmin(true_values)])
     vmax = np.nanmax([np.nanmax(pred_mean), np.nanmax(true_values)])
     
-    # 初始化图像
+    # Initialize plot
     im1 = axes[0].imshow(pred_mean[:, :, 0], aspect='auto', origin='lower', 
                         cmap='jet_r', vmin=vmin, vmax=vmax)
     axes[0].set_title('Predicted Temperature', fontsize=14, fontweight='bold')
@@ -81,53 +81,53 @@ def generate_timeseries_animation(model_name="unet"):
                     fontsize=16, fontweight='bold')
         return [im1, im2]
     
-    # 创建动画（每帧间隔200ms）
+    # Create animation (200ms per frame)
     anim = FuncAnimation(fig, animate, frames=T, interval=200, blit=True, repeat=True)
     
-    # 保存为GIF
+    # Save as GIF
     gif_path = FIGURES_DIR / f"{model_name}_timeseries_animation.gif"
-    print(f"  保存动画到: {gif_path}")
+    print(f"  Saving animation to: {gif_path}")
     anim.save(str(gif_path), writer=PillowWriter(fps=5), dpi=100)
     plt.close()
-    print(f"✅ 时间序列动画已保存: {gif_path}")
+    print(f"✅ Time Series Animation Saved: {gif_path}")
     
     return gif_path
 
 
 def generate_3d_visualization(model_name="unet"):
-    """生成3D可视化（空间×时间）"""
-    print(f"\n生成{model_name.upper()} 3D可视化...")
+    """Generate 3D Visualization (Spatial x Temporal)"""
+    print(f"\nGenerating {model_name.upper()} 3D visualization...")
     
-    # 加载预测数据
+    # Load prediction data
     pred_dir = OUTPUT_DIR / "figures" / "all_days"
     pred_mean_path = pred_dir / f"{model_name}_pred_mean.npy"
     
     if not pred_mean_path.exists():
-        print(f"⚠️  {model_name}模型的预测数据不存在，跳过")
+        print(f"⚠️  Prediction data for {model_name} not found, skipping")
         return None
     
     pred_mean = np.load(pred_mean_path)
     H, W, T = pred_mean.shape
     
-    # 降采样以提高可视化速度（每5个点采样一次）
+    # Downsample to improve visualization speed (sample every 5 points)
     step = 5
     lat_indices = np.arange(0, H, step)
     lon_indices = np.arange(0, W, step)
-    time_indices = np.arange(0, T, 2)  # 每2天采样一次
+    time_indices = np.arange(0, T, 2)  # Sample every 2 days
     
-    # 创建网格
+    # Create grid
     lat_grid, lon_grid, time_grid = np.meshgrid(
         lat_indices, lon_indices, time_indices, indexing='ij'
     )
     
-    # 提取数据
+    # Extract data
     values = pred_mean[lat_grid, lon_grid, time_grid]
     
-    # 创建3D图
+    # Create 3D plot
     fig = plt.figure(figsize=(16, 12))
     ax = fig.add_subplot(111, projection='3d')
     
-    # 绘制3D散点图（颜色表示温度）
+    # Plot 3D scatter (color represents temperature)
     scatter = ax.scatter(lat_grid.flatten(), lon_grid.flatten(), time_grid.flatten(),
                         c=values.flatten(), cmap='jet_r', s=1, alpha=0.6)
     
@@ -139,23 +139,23 @@ def generate_3d_visualization(model_name="unet"):
     
     plt.colorbar(scatter, ax=ax, label='Temperature (K)', shrink=0.8)
     
-    # 保存
+    # Save
     fig_path = FIGURES_DIR / f"{model_name}_3d_visualization.png"
     plt.savefig(fig_path, dpi=150, bbox_inches='tight')
     plt.close()
-    print(f"✅ 3D可视化已保存: {fig_path}")
+    print(f"✅ 3D Visualization Saved: {fig_path}")
     
-    # 创建时间切片3D图（所有31天，8行×4列布局）
-    print(f"  生成所有{T}天的3D表面图（8行×4列布局）...")
+    # Create time slice 3D plots (all 31 days, 8 rows x 4 columns)
+    print(f"  Generating 3D surface plots for all {T} days (8x4 layout)...")
     n_rows = 8
     n_cols = 4
     fig = plt.figure(figsize=(20, 40))
     
-    # 确定统一的颜色范围
+    # Determine unified color range
     vmin = np.nanmin(pred_mean)
     vmax = np.nanmax(pred_mean)
     
-    # 降采样空间维度以提高渲染速度（每5个点采样一次）
+    # Downsample spatial dimensions for rendering speed
     step = 5
     lat_sampled = np.arange(0, H, step)
     lon_sampled = np.arange(0, W, step)
@@ -166,11 +166,11 @@ def generate_3d_visualization(model_name="unet"):
         
         ax = fig.add_subplot(n_rows, n_cols, day+1, projection='3d')
         
-        # 创建降采样后的空间网格
+        # Create downsampled spatial grid
         lat_2d, lon_2d = np.meshgrid(lat_sampled, lon_sampled, indexing='ij')
         values_2d = pred_mean[lat_2d, lon_2d, day]
         
-        # 绘制3D表面
+        # Plot 3D surface
         surf = ax.plot_surface(lat_2d, lon_2d, values_2d, cmap='jet_r', 
                               vmin=vmin, vmax=vmax,
                               alpha=0.8, linewidth=0, antialiased=True)
@@ -180,47 +180,47 @@ def generate_3d_visualization(model_name="unet"):
         ax.set_zlabel('Temp (K)', fontsize=7)
         ax.set_title(f'Day {day+1}', fontsize=8, fontweight='bold', pad=5)
         ax.view_init(elev=30, azim=45)
-        # 减小刻度字体大小
+        # Reduce tick label size
         ax.tick_params(labelsize=6)
     
-    # 移除顶部标题，减少留白
+    # Remove top title, reduce whitespace
     plt.tight_layout(pad=0.5)
     
     fig_path = FIGURES_DIR / f"{model_name}_3d_surfaces.png"
     plt.savefig(fig_path, dpi=150, bbox_inches='tight', pad_inches=0.05)
     plt.close()
-    print(f"✅ 3D表面图（所有{T}天）已保存: {fig_path}")
+    print(f"✅ 3D Surface Plots (All {T} Days) Saved: {fig_path}")
     
     return fig_path
 
 
 def generate_interactive_plot(model_name="unet"):
-    """生成交互式图表（使用plotly，如果可用）"""
-    print(f"\n生成{model_name.upper()}交互式图表...")
+    """Generate Interactive Plots (using plotly, if available)"""
+    print(f"\nGenerating {model_name.upper()} interactive plots...")
     
     try:
         import plotly.graph_objects as go
         import plotly.express as px
         from plotly.subplots import make_subplots
     except ImportError:
-        print("⚠️  Plotly未安装，跳过交互式图表生成")
-        print("   安装命令: pip install plotly")
+        print("⚠️  Plotly not installed, skipping interactive plot generation")
+        print("   Install command: pip install plotly")
         return None
     
-    # 加载预测数据
+    # Load prediction data
     pred_dir = OUTPUT_DIR / "figures" / "all_days"
     pred_mean_path = pred_dir / f"{model_name}_pred_mean.npy"
     true_path = pred_dir / f"{model_name}_true.npy"
     
     if not all(p.exists() for p in [pred_mean_path, true_path]):
-        print(f"⚠️  {model_name}模型的预测数据不存在，跳过")
+        print(f"⚠️  Prediction data for {model_name} not found, skipping")
         return None
     
     pred_mean = np.load(pred_mean_path)
     true_values = np.load(true_path)
     H, W, T = pred_mean.shape
     
-    # 创建交互式热图（选择第15天）
+    # Create interactive heatmap (select Day 15)
     day_idx = 14
     fig = make_subplots(
         rows=1, cols=2,
@@ -228,7 +228,7 @@ def generate_interactive_plot(model_name="unet"):
         specs=[[{'type': 'heatmap'}, {'type': 'heatmap'}]]
     )
     
-    # 预测值热图
+    # Predicted heatmap
     fig.add_trace(
         go.Heatmap(
             z=pred_mean[:, :, day_idx],
@@ -239,7 +239,7 @@ def generate_interactive_plot(model_name="unet"):
         row=1, col=1
     )
     
-    # 真实值热图
+    # True value heatmap
     fig.add_trace(
         go.Heatmap(
             z=true_values[:, :, day_idx],
@@ -256,12 +256,12 @@ def generate_interactive_plot(model_name="unet"):
         width=1400
     )
     
-    # 保存为HTML
+    # Save as HTML
     html_path = FIGURES_DIR / f"{model_name}_interactive_heatmap.html"
     fig.write_html(str(html_path))
-    print(f"✅ 交互式热图已保存: {html_path}")
+    print(f"✅ Interactive Heatmap Saved: {html_path}")
     
-    # 创建时间序列交互图（选择中心点）
+    # Create interactive time series plot (select center point)
     center_lat, center_lon = H//2, W//2
     true_ts = true_values[center_lat, center_lon, :]
     pred_ts = pred_mean[center_lat, center_lon, :]
@@ -301,38 +301,36 @@ def generate_interactive_plot(model_name="unet"):
         
         html_path = FIGURES_DIR / f"{model_name}_interactive_timeseries.html"
         fig.write_html(str(html_path))
-        print(f"✅ 交互式时间序列已保存: {html_path}")
+        print(f"✅ Interactive Time Series Saved: {html_path}")
     
     return html_path
 
 
 def main():
-    """主函数"""
+    """Main function"""
     print("=" * 80)
-    print("  高级可视化生成")
+    print("  Generate Advanced Visualizations")
     print("=" * 80)
     
     models = ["unet", "tree", "gp"]
     
     for model_name in models:
-        print(f"\n处理{model_name.upper()}模型...")
+        print(f"\nProcessing {model_name.upper()} model...")
         
-        # 1. 时间序列动画
+        # 1. Time Series Animation
         generate_timeseries_animation(model_name)
         
-        # 2. 3D可视化
+        # 2. 3D Visualization
         generate_3d_visualization(model_name)
         
-        # 3. 交互式图表
+        # 3. Interactive Plots
         generate_interactive_plot(model_name)
     
     print("\n" + "=" * 80)
-    print("  高级可视化生成完成")
+    print("  Advanced Visualization Generation Completed")
     print("=" * 80)
-    print(f"\n所有文件已保存到: {FIGURES_DIR}")
+    print(f"\nAll files saved to: {FIGURES_DIR}")
 
 
 if __name__ == "__main__":
     main()
-
-

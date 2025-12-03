@@ -1,10 +1,10 @@
 """
-结果深度分析
+Deep Analysis of Results
 
-该脚本对模型预测结果进行深度分析：
-1. 误差空间分布图（按区域分析误差）
-2. 时间序列预测对比（选定区域的时间序列）
-3. 极端值分析（高温/低温区域的预测表现）
+This script performs deep analysis on model prediction results:
+1. Spatial Error Distribution Map (Analyze error by region)
+2. Time Series Prediction Comparison (Time series for selected regions)
+3. Extreme Value Analysis (Prediction performance in high/low temperature regions)
 """
 
 import sys
@@ -18,21 +18,21 @@ from scipy import stats
 import json
 from datetime import datetime
 
-# 添加项目根目录到路径
+# Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from lstinterp.data import load_modis_tensor, MODISDataset
 from lstinterp.metrics import rmse, mae, r2
 
-# 输出目录
+# Output directory
 OUTPUT_DIR = project_root / "output"
 FIGURES_DIR = OUTPUT_DIR / "figures" / "deep_analysis"
 RESULTS_DIR = OUTPUT_DIR / "results" / "deep_analysis"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# 数据路径
+# Data path
 DATA_PATH = project_root / "modis_aug_data" / "MODIS_Aug.mat"
 
 plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans']
@@ -41,14 +41,14 @@ sns.set_style("whitegrid")
 
 
 def print_section_header(title):
-    """打印章节标题"""
+    """Print section header"""
     print("\n" + "=" * 80)
     print(f"  {title}")
     print("=" * 80)
 
 
 def load_predictions(model_name="unet"):
-    """加载模型预测结果"""
+    """Load model prediction results"""
     pred_dir = OUTPUT_DIR / "figures" / "all_days"
     
     pred_mean_path = pred_dir / f"{model_name}_pred_mean.npy"
@@ -56,7 +56,7 @@ def load_predictions(model_name="unet"):
     true_path = pred_dir / f"{model_name}_true.npy"
     
     if not all(p.exists() for p in [pred_mean_path, pred_std_path, true_path]):
-        print(f"⚠️  {model_name}模型的预测数据不存在，跳过")
+        print(f"⚠️  Prediction data for {model_name} not found, skipping")
         return None
     
     pred_mean = np.load(pred_mean_path)
@@ -67,13 +67,13 @@ def load_predictions(model_name="unet"):
 
 
 def analyze_spatial_error_distribution(pred_mean, true_values, model_name, H, W, T):
-    """分析误差的空间分布"""
-    print_section_header(f"{model_name.upper()} - 误差空间分布分析")
+    """Analyze spatial distribution of errors"""
+    print_section_header(f"{model_name.upper()} - Spatial Error Distribution Analysis")
     
-    # 计算误差
+    # Calculate errors
     errors = true_values - pred_mean
     
-    # 按区域分析（将空间分为9个区域：3×3）
+    # Analyze by region (divide space into 9 regions: 3x3)
     n_regions_lat = 3
     n_regions_lon = 3
     
@@ -101,19 +101,19 @@ def analyze_spatial_error_distribution(pred_mean, true_values, model_name, H, W,
             lon_start = j * lon_size_per_region
             lon_end = (j + 1) * lon_size_per_region if j < n_regions_lon - 1 else W
             
-            # 提取区域数据
+            # Extract region data
             region_true = true_values[lat_start:lat_end, lon_start:lon_end, :]
             region_pred = pred_mean[lat_start:lat_end, lon_start:lon_end, :]
             region_errors = errors[lat_start:lat_end, lon_start:lon_end, :]
             
-            # 只考虑有效值（非NaN）
+            # Only consider valid values (non-NaN)
             mask = ~np.isnan(region_true) & ~np.isnan(region_pred)
             if mask.sum() > 0:
                 region_true_flat = region_true[mask]
                 region_pred_flat = region_pred[mask]
                 region_errors_flat = region_errors[mask]
                 
-                # 计算统计量
+                # Calculate statistics
                 region_rmse = np.sqrt(np.mean(region_errors_flat**2))
                 region_mae = np.mean(np.abs(region_errors_flat))
                 region_r2 = 1 - np.sum(region_errors_flat**2) / np.sum((region_true_flat - region_true_flat.mean())**2)
@@ -130,9 +130,9 @@ def analyze_spatial_error_distribution(pred_mean, true_values, model_name, H, W,
                 region_stats['Std_Error'].append(region_std_error)
                 region_stats['Num_Pixels'].append(mask.sum())
                 
-                # 绘制该区域的误差分布
+                # Plot error distribution for this region
                 ax = axes[i, j]
-                region_error_2d = np.nanmean(np.abs(region_errors), axis=2)  # 平均绝对误差
+                region_error_2d = np.nanmean(np.abs(region_errors), axis=2)  # Mean Absolute Error
                 im = ax.imshow(region_error_2d, aspect='auto', origin='lower', 
                               cmap='Reds', vmin=0, vmax=np.nanmax(np.abs(errors)))
                 ax.set_title(f'Region {i*n_regions_lon+j+1}\nRMSE={region_rmse:.2f}K, R²={region_r2:.3f}', 
@@ -151,26 +151,26 @@ def analyze_spatial_error_distribution(pred_mean, true_values, model_name, H, W,
     fig_path = FIGURES_DIR / f"{model_name}_spatial_error_regions.png"
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ 空间误差分布图已保存: {fig_path}")
+    print(f"✅ Spatial Error Distribution Map Saved: {fig_path}")
     
-    # 保存统计表
+    # Save statistics table
     df = pd.DataFrame(region_stats)
     csv_path = RESULTS_DIR / f"{model_name}_spatial_error_regions.csv"
     df.to_csv(csv_path, index=False, float_format='%.4f')
-    print(f"✅ 区域误差统计已保存: {csv_path}")
+    print(f"✅ Regional Error Statistics Saved: {csv_path}")
     
-    # 打印摘要
-    print("\n区域误差统计摘要:")
+    # Print summary
+    print("\nRegional Error Statistics Summary:")
     print(df[['Region', 'RMSE', 'MAE', 'R2', 'Mean_Error']].to_string(index=False, float_format='%.3f'))
     
     return df
 
 
 def analyze_timeseries_comparison(pred_mean, pred_std, true_values, model_name, H, W, T):
-    """分析选定区域的时间序列预测对比"""
-    print_section_header(f"{model_name.upper()} - 时间序列预测对比")
+    """Analyze time series prediction comparison for selected regions"""
+    print_section_header(f"{model_name.upper()} - Time Series Prediction Comparison")
     
-    # 选择几个代表性的空间位置
+    # Select representative spatial locations
     locations = [
         (H//4, W//4, "Northwest"),
         (H//4, 3*W//4, "Northeast"),
@@ -192,12 +192,12 @@ def analyze_timeseries_comparison(pred_mean, pred_std, true_values, model_name, 
     }
     
     for idx, (lat_idx, lon_idx, name) in enumerate(locations):
-        # 提取该位置的时间序列
+        # Extract time series for the location
         true_ts = true_values[lat_idx, lon_idx, :]
         pred_ts = pred_mean[lat_idx, lon_idx, :]
         pred_std_ts = pred_std[lat_idx, lon_idx, :]
         
-        # 只考虑有效值
+        # Only consider valid values
         mask = ~np.isnan(true_ts) & ~np.isnan(pred_ts)
         if mask.sum() > 5:
             valid_days = np.where(mask)[0] + 1
@@ -205,7 +205,7 @@ def analyze_timeseries_comparison(pred_mean, pred_std, true_values, model_name, 
             pred_ts_valid = pred_ts[mask]
             pred_std_ts_valid = pred_std_ts[mask]
             
-            # 计算统计量
+            # Calculate statistics
             errors = true_ts_valid - pred_ts_valid
             ts_rmse = np.sqrt(np.mean(errors**2))
             ts_mae = np.mean(np.abs(errors))
@@ -218,14 +218,14 @@ def analyze_timeseries_comparison(pred_mean, pred_std, true_values, model_name, 
             location_stats['R2'].append(ts_r2)
             location_stats['Mean_Error'].append(ts_mean_error)
             
-            # 绘制时间序列
+            # Plot time series
             ax = axes[idx]
             ax.plot(valid_days, true_ts_valid, 'o-', label='True', linewidth=2, 
                    markersize=5, color='blue', alpha=0.7)
             ax.plot(valid_days, pred_ts_valid, 's-', label='Predicted', linewidth=2, 
                    markersize=4, color='red', alpha=0.7)
             
-            # 绘制不确定性区间（90%）
+            # Plot uncertainty interval (90%)
             upper_bound = pred_ts_valid + 1.645 * pred_std_ts_valid
             lower_bound = pred_ts_valid - 1.645 * pred_std_ts_valid
             ax.fill_between(valid_days, lower_bound, upper_bound, alpha=0.2, 
@@ -249,37 +249,37 @@ def analyze_timeseries_comparison(pred_mean, pred_std, true_values, model_name, 
     fig_path = FIGURES_DIR / f"{model_name}_timeseries_comparison.png"
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ 时间序列对比图已保存: {fig_path}")
+    print(f"✅ Time Series Comparison Plot Saved: {fig_path}")
     
-    # 保存统计表
+    # Save statistics table
     df = pd.DataFrame(location_stats)
     csv_path = RESULTS_DIR / f"{model_name}_timeseries_stats.csv"
     df.to_csv(csv_path, index=False, float_format='%.4f')
-    print(f"✅ 时间序列统计已保存: {csv_path}")
+    print(f"✅ Time Series Statistics Saved: {csv_path}")
     
     return df
 
 
 def analyze_extreme_values(pred_mean, pred_std, true_values, model_name, H, W, T):
-    """分析极端值（高温/低温）的预测表现"""
-    print_section_header(f"{model_name.upper()} - 极端值分析")
+    """Analyze prediction performance for extreme values (high/low temperatures)"""
+    print_section_header(f"{model_name.upper()} - Extreme Value Analysis")
     
-    # 提取所有有效值
+    # Extract all valid values
     mask = ~np.isnan(true_values) & ~np.isnan(pred_mean)
     true_flat = true_values[mask]
     pred_flat = pred_mean[mask]
     pred_std_flat = pred_std[mask]
     errors_flat = true_flat - pred_flat
     
-    # 定义极端值（高温和低温）
-    temp_threshold_low = np.percentile(true_flat, 10)  # 最低10%
-    temp_threshold_high = np.percentile(true_flat, 90)  # 最高10%
+    # Define extreme values (high and low)
+    temp_threshold_low = np.percentile(true_flat, 10)  # Bottom 10%
+    temp_threshold_high = np.percentile(true_flat, 90)  # Top 10%
     
     low_temp_mask = true_flat <= temp_threshold_low
     high_temp_mask = true_flat >= temp_threshold_high
     normal_temp_mask = ~low_temp_mask & ~high_temp_mask
     
-    # 统计各温度段的性能
+    # Calculate performance for each temperature range
     extreme_stats = {
         'Temperature_Range': ['Low (Bottom 10%)', 'Normal (10%-90%)', 'High (Top 10%)'],
         'Temperature_Mean(K)': [
@@ -310,13 +310,13 @@ def analyze_extreme_values(pred_mean, pred_std, true_values, model_name, H, W, T
     }
     
     df = pd.DataFrame(extreme_stats)
-    print("\n极端值预测性能:")
+    print("\nExtreme Value Prediction Performance:")
     print(df.to_string(index=False, float_format='%.3f'))
     
-    # 可视化
+    # Visualize
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
-    # 误差分布（按温度段）
+    # Error distribution (by temperature range)
     axes[0, 0].hist(errors_flat[low_temp_mask], bins=30, alpha=0.5, label='Low Temp', color='blue')
     axes[0, 0].hist(errors_flat[normal_temp_mask], bins=30, alpha=0.5, label='Normal Temp', color='green')
     axes[0, 0].hist(errors_flat[high_temp_mask], bins=30, alpha=0.5, label='High Temp', color='red')
@@ -327,7 +327,7 @@ def analyze_extreme_values(pred_mean, pred_std, true_values, model_name, H, W, T
     axes[0, 0].legend()
     axes[0, 0].grid(True, alpha=0.3)
     
-    # 预测值 vs 真实值（按温度段）
+    # Predicted vs True (by temperature range)
     if low_temp_mask.sum() > 0:
         axes[0, 1].scatter(true_flat[low_temp_mask], pred_flat[low_temp_mask], 
                           alpha=0.3, label='Low Temp', s=10, color='blue')
@@ -347,14 +347,14 @@ def analyze_extreme_values(pred_mean, pred_std, true_values, model_name, H, W, T
     axes[0, 1].legend()
     axes[0, 1].grid(True, alpha=0.3)
     
-    # RMSE对比
+    # RMSE comparison
     axes[1, 0].bar(df['Temperature_Range'], df['RMSE'], color=['blue', 'green', 'red'], alpha=0.7)
     axes[1, 0].set_title('RMSE by Temperature Range', fontsize=12, fontweight='bold')
     axes[1, 0].set_ylabel('RMSE (K)')
     axes[1, 0].tick_params(axis='x', rotation=45)
     axes[1, 0].grid(True, alpha=0.3, axis='y')
     
-    # 平均误差对比
+    # Mean Error comparison
     axes[1, 1].bar(df['Temperature_Range'], df['Mean_Error'], color=['blue', 'green', 'red'], alpha=0.7)
     axes[1, 1].axhline(y=0, color='black', linestyle='--', linewidth=2)
     axes[1, 1].set_title('Mean Error by Temperature Range', fontsize=12, fontweight='bold')
@@ -366,66 +366,64 @@ def analyze_extreme_values(pred_mean, pred_std, true_values, model_name, H, W, T
     fig_path = FIGURES_DIR / f"{model_name}_extreme_values.png"
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"✅ 极端值分析图已保存: {fig_path}")
+    print(f"✅ Extreme Value Analysis Plot Saved: {fig_path}")
     
-    # 保存统计表
+    # Save statistics table
     csv_path = RESULTS_DIR / f"{model_name}_extreme_values.csv"
     df.to_csv(csv_path, index=False, float_format='%.4f')
-    print(f"✅ 极端值统计已保存: {csv_path}")
+    print(f"✅ Extreme Value Statistics Saved: {csv_path}")
     
     return df
 
 
 def main():
-    """主函数"""
+    """Main function"""
     print("=" * 80)
-    print("  结果深度分析")
+    print("  Deep Analysis of Results")
     print("=" * 80)
     
-    # 加载测试数据获取维度
+    # Load test data to get dimensions
     test_tensor = load_modis_tensor(str(DATA_PATH), key="test_tensor")
     H, W, T = test_tensor.shape
-    print(f"\n数据维度: {H} × {W} × {T}")
+    print(f"\nData dimensions: {H} × {W} × {T}")
     
-    # 分析U-Net模型
+    # Analyze U-Net model
     unet_results = load_predictions("unet")
     if unet_results is not None:
         pred_mean, pred_std, true_values = unet_results
-        print(f"\n加载U-Net预测数据: {pred_mean.shape}")
+        print(f"\nLoaded U-Net prediction data: {pred_mean.shape}")
         
-        # 1. 误差空间分布
+        # 1. Spatial Error Distribution
         spatial_df = analyze_spatial_error_distribution(pred_mean, true_values, "unet", H, W, T)
         
-        # 2. 时间序列对比
+        # 2. Time Series Comparison
         timeseries_df = analyze_timeseries_comparison(pred_mean, pred_std, true_values, "unet", H, W, T)
         
-        # 3. 极端值分析
+        # 3. Extreme Value Analysis
         extreme_df = analyze_extreme_values(pred_mean, pred_std, true_values, "unet", H, W, T)
     
-    # 分析Tree模型
+    # Analyze Tree model
     tree_results = load_predictions("tree")
     if tree_results is not None:
         pred_mean, pred_std, true_values = tree_results
-        print(f"\n加载Tree预测数据: {pred_mean.shape}")
+        print(f"\nLoaded Tree prediction data: {pred_mean.shape}")
         
-        # 1. 误差空间分布
+        # 1. Spatial Error Distribution
         spatial_df = analyze_spatial_error_distribution(pred_mean, true_values, "tree", H, W, T)
         
-        # 2. 时间序列对比
+        # 2. Time Series Comparison
         timeseries_df = analyze_timeseries_comparison(pred_mean, pred_std, true_values, "tree", H, W, T)
         
-        # 3. 极端值分析
+        # 3. Extreme Value Analysis
         extreme_df = analyze_extreme_values(pred_mean, pred_std, true_values, "tree", H, W, T)
     
     print("\n" + "=" * 80)
-    print("  深度分析完成")
+    print("  Deep Analysis Completed")
     print("=" * 80)
-    print(f"\n所有结果已保存到:")
-    print(f"  - 图表: {FIGURES_DIR}")
-    print(f"  - 数据: {RESULTS_DIR}")
+    print(f"\nAll results saved to:")
+    print(f"  - Figures: {FIGURES_DIR}")
+    print(f"  - Data: {RESULTS_DIR}")
 
 
 if __name__ == "__main__":
     main()
-
-

@@ -1,4 +1,4 @@
-"""概率评估指标：CRPS、覆盖率等"""
+"""Probabilistic evaluation metrics: CRPS, coverage, etc."""
 import numpy as np
 from typing import Union, Tuple
 from scipy.stats import norm
@@ -6,17 +6,17 @@ from scipy.stats import norm
 
 def crps_gaussian(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray) -> float:
     """
-    计算连续概率排序分数（CRPS）对于高斯分布
+    Calculate Continuous Ranked Probability Score (CRPS) for Gaussian distribution
     
-    参数:
-    y_true: 真实值
-    mean: 预测均值
-    std: 预测标准差
+    Args:
+    y_true: True values
+    mean: Predicted mean
+    std: Predicted standard deviation
     
-    返回:
-    CRPS值
+    Returns:
+    CRPS value
     """
-    std = np.maximum(std, 1e-10)  # 避免除零
+    std = np.maximum(std, 1e-10)  # Avoid division by zero
     z = (y_true - mean) / std
     crps = std * (z * (2 * norm.cdf(z) - 1) + 2 * norm.pdf(z) - 1 / np.sqrt(np.pi))
     return float(np.mean(crps))
@@ -24,14 +24,14 @@ def crps_gaussian(y_true: np.ndarray, mean: np.ndarray, std: np.ndarray) -> floa
 
 def crps_samples(y_true: np.ndarray, samples: np.ndarray) -> float:
     """
-    从样本计算CRPS（样本版本）
+    Calculate CRPS from samples (sample version)
     
-    参数:
-    y_true: 真实值 (N,)
-    samples: 预测样本 (N, M) 或 (M, N)
+    Args:
+    y_true: True values (N,)
+    samples: Predicted samples (N, M) or (M, N)
     
-    返回:
-    CRPS值
+    Returns:
+    CRPS value
     """
     if samples.ndim == 1:
         samples = samples.reshape(1, -1)
@@ -54,15 +54,15 @@ def prediction_interval_coverage(
     upper: np.ndarray
 ) -> Tuple[float, float]:
     """
-    计算预测区间覆盖率
+    Calculate prediction interval coverage
     
-    参数:
-    y_true: 真实值
-    lower: 区间下界
-    upper: 区间上界
+    Args:
+    y_true: True values
+    lower: Interval lower bound
+    upper: Interval upper bound
     
-    返回:
-    (覆盖率, 平均区间宽度)
+    Returns:
+    (coverage, average interval width)
     """
     coverage = np.mean((y_true >= lower) & (y_true <= upper))
     width = np.mean(upper - lower)
@@ -75,14 +75,14 @@ def prediction_interval_from_gaussian(
     alpha: float = 0.1
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    从高斯分布计算预测区间
+    Calculate prediction interval from Gaussian distribution
     
-    参数:
-    mean: 预测均值
-    std: 预测标准差
-    alpha: 显著性水平（默认0.1表示90%区间）
+    Args:
+    mean: Predicted mean
+    std: Predicted standard deviation
+    alpha: Significance level (default 0.1 for 90% interval)
     
-    返回:
+    Returns:
     (lower, upper)
     """
     z = norm.ppf(1 - alpha / 2)
@@ -98,21 +98,21 @@ def calibration_error(
     n_bins: int = 10
 ) -> float:
     """
-    计算校准误差（Calibration Error）
+    Calculate Calibration Error
     
-    参数:
-    y_true: 真实值
-    mean: 预测均值
-    std: 预测标准差
-    n_bins: 分箱数量
+    Args:
+    y_true: True values
+    mean: Predicted mean
+    std: Predicted standard deviation
+    n_bins: Number of bins
     
-    返回:
-    校准误差
+    Returns:
+    Calibration error
     """
     std = np.maximum(std, 1e-10)
     z_scores = (y_true - mean) / std
     
-    # 计算每个分箱的覆盖率
+    # Calculate coverage for each bin
     bin_edges = np.linspace(0, 1, n_bins + 1)
     bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
     
@@ -136,7 +136,7 @@ def compute_probabilistic_metrics(
     std: np.ndarray,
     alpha: float = 0.1
 ) -> dict:
-    """计算所有概率指标"""
+    """Calculate all probabilistic metrics"""
     crps = crps_gaussian(y_true, mean, std)
     lower, upper = prediction_interval_from_gaussian(mean, std, alpha)
     coverage, width = prediction_interval_coverage(y_true, lower, upper)
@@ -150,3 +150,6 @@ def compute_probabilistic_metrics(
     }
 
 
+# Add aliases for cleaner imports
+coverage_probability = lambda y, mean, std, alpha=0.1: compute_probabilistic_metrics(y, mean, std, alpha)[f"coverage_{int((1-alpha)*100)}"]
+interval_width = lambda std, alpha=0.1: compute_probabilistic_metrics(np.zeros_like(std), np.zeros_like(std), std, alpha)[f"interval_width_{int((1-alpha)*100)}"]

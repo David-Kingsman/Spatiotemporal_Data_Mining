@@ -1,448 +1,270 @@
 """
-核函数设计对比实验
+GP Kernel Design Comparison Experiment
 
-根据 Gemini 的建议，对比三种不同复杂度的时空核函数设计：
-- Design 1: 可分离核 k_space × k_time
-- Design 2: 加性核 k_RQ(space) + k_Periodic(time) + k_Linear(time)
-- Design 3: 非分离核 k_Matern(3D input)
+This script trains and compares three different Spatio-Temporal GP kernel designs:
+1. Separable Kernel (Space x Time) - Recommended
+2. Additive Kernel (Space + Time)
+3. Non-Separable Kernel (Direct 3D Matern)
 
-这个脚本将训练三种不同的设计，并在相同的数据上评估它们的性能。
+Note: To speed up comparison, this script uses a subset of the data (subsampling).
 """
 
-import os
 import sys
+import os
 import time
+import json
+from pathlib import Path
 import numpy as np
 import torch
-from pathlib import Path
+from torch.utils.data import DataLoader
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# 添加项目根目录到路径
+# Add project root to path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# 检查并导入 gpytorch
+# Check for GPyTorch
 try:
     import gpytorch
-    from gpytorch.mlls import VariationalELBO
-    GPYTORCH_AVAILABLE = True
 except ImportError:
-    print("⚠️  警告: 需要安装 gpytorch 才能运行此脚本")
-    print("   请运行: pip install gpytorch")
-    GPYTORCH_AVAILABLE = False
-    gpytorch = None
-    VariationalELBO = None
+    print("❌ GPyTorch not installed. Please run: pip install gpytorch")
+    sys.exit(1)
 
-from lstinterp.data.modis import load_modis_tensor, MODISDataset
-from lstinterp.models.gp_st import GPSTModel, GPSTConfig, create_inducing_points
-from lstinterp.metrics.probabilistic import crps_gaussian
-from lstinterp.utils import set_seed
+from lstinterp.data import load_modis_tensor, MODISDataset, MODISConfig
+from lstinterp.models.gp_st import STSeparableGP, STAdditiveGP, STNonSeparableGP
+from lstinterp.config import GPSTConfig
+from lstinterp.metrics import rmse, mae, r2, crps_gaussian, coverage_probability, interval_width
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+# Output configuration
+OUTPUT_DIR = project_root / "output"
+RESULTS_DIR = OUTPUT_DIR / "results" / "kernel_comparison"
+FIGURES_DIR = OUTPUT_DIR / "figures" / "kernel_comparison"
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
+# Training configuration (Fast comparison mode)
+BATCH_SIZE = 2048
+NUM_EPOCHS = 30  # Reduced epochs for comparison
+LR = 0.02
+NUM_INDUCING = 600
+SUBSAMPLE_RATIO = 1  # Only use 20% of training data for speed
 
-def print_section_header(title: str):
-    """打印章节标题"""
-    print("\n" + "=" * 80)
-    print(f"  {title}")
-    print("=" * 80)
+# Device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 
-
-def evaluate_model(model, test_dataset, device='cpu'):
-    """
-    评估模型性能
+def train_and_evaluate(kernel_design, train_loader, test_loader, test_values_np):
+    """Train and evaluate a specific kernel design"""
+    print(f"\n{'-'*20} Training Kernel Design: {kernel_design.upper()} {'-'*20}")
     
-    返回:
-    metrics: dict，包含各种评估指标
-    """
-    model.eval()
-    model.likelihood.eval()
+    # 1. Initialize Model
+    config = GPSTConfig(
+        kernel_design=kernel_design,
+        num_inducing=NUM_INDUCING,
+        lr=LR,
+        num_epochs=NUM_EPOCHS
+    )
     
-    # 收集所有测试数据
-    test_values = []
-    test_coords = []
+    # Initialize inducing points (from first batch)
+    # Note: In a real scenario, K-means initialization is better
+    dummy_batch, _ = next(iter(train_loader))
+    inducing_points = dummy_batch[:NUM_INDUCING].clone()
     
-    for i in range(len(test_dataset)):
-        coords, value = test_dataset[i]
-        test_coords.append(coords.numpy())
-        test_values.append(value.item())
+    # Instantiate model based on design
+    if kernel_design == "separable":
+        model = STSeparableGP(inducing_points, config).to(device)
+    elif kernel_design == "additive":
+        model = STAdditiveGP(inducing_points, config).to(device)
+    elif kernel_design == "non_separable":
+        model = STNonSeparableGP(inducing_points, config).to(device)
+    else:
+        raise ValueError(f"Unknown kernel design: {kernel_design}")
+        
+    likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
     
-    test_coords = torch.tensor(np.array(test_coords), dtype=torch.float32, device=device)
-    test_values = np.array(test_values)
+    # 2. Train
+    model.train()
+    likelihood.train()
+    optimizer = torch.optim.Adam([
+        {'params': model.parameters()},
+        {'params': likelihood.parameters()},
+    ], lr=config.lr)
     
-    # 批量预测（避免内存溢出）
-    batch_size = 1000
-    means = []
-    stds = []
-    
-    with torch.no_grad():
-        for i in range(0, len(test_coords), batch_size):
-            batch_coords = test_coords[i:i+batch_size]
-            mean_batch, std_batch = model.predict(batch_coords)
-            means.append(mean_batch.cpu().numpy())
-            stds.append(std_batch.cpu().numpy())
-    
-    mean = np.concatenate(means)
-    std = np.concatenate(stds)
-    
-    # 计算评估指标
-    rmse = np.sqrt(np.mean((test_values - mean) ** 2))
-    mae = np.mean(np.abs(test_values - mean))
-    mape = np.mean(np.abs((test_values - mean) / (test_values + 1e-8))) * 100
-    
-    ss_res = np.sum((test_values - mean) ** 2)
-    ss_tot = np.sum((test_values - np.mean(test_values)) ** 2)
-    r2 = 1 - (ss_res / (ss_tot + 1e-8))
-    
-    # CRPS (crps_gaussian already returns the mean)
-    crps = crps_gaussian(test_values, mean, std)
-    
-    # 预测区间覆盖率（90%）
-    lower = mean - 1.645 * std  # 5%分位数
-    upper = mean + 1.645 * std  # 95%分位数
-    coverage = np.mean((test_values >= lower) & (test_values <= upper))
-    interval_width = np.mean(upper - lower)
-    
-    return {
-        'rmse': rmse,
-        'mae': mae,
-        'mape': mape,
-        'r2': r2,
-        'crps': crps,
-        'coverage': coverage,
-        'interval_width': interval_width,
-        'mean': mean,
-        'std': std,
-        'true_values': test_values
-    }
-
-
-def train_model(config, train_dataset, device='cpu', verbose=True):
-    """
-    训练 GP 模型
-    
-    返回:
-    model: 训练好的模型
-    train_time: 训练时间（秒）
-    """
-    if verbose:
-        print(f"\n训练 {config.kernel_design} 设计...")
+    mll = gpytorch.mlls.VariationalELBO(likelihood, model, num_data=len(train_loader.dataset))
     
     start_time = time.time()
+    epoch_losses = []
     
-    # 创建诱导点
-    n_space = int(np.sqrt(config.num_inducing // 10))  # 假设10个时间点
-    n_time = min(10, 31)  # 限制时间点数量
+    print(f"Starting training ({NUM_EPOCHS} epochs)...")
     
-    inducing_points = create_inducing_points(
-        n_space=n_space,
-        n_time=n_time,
-        normalize=True
-    ).to(device)
+    # Normalize targets for training stability
+    # Calculate mean and std from training data (approximation from batch)
+    # Better to compute from dataset, but we can estimate from subsample
+    # Note: MODISDataset returns raw Kelvin values.
+    # GP works much better if targets are ~N(0,1)
     
-    # 创建模型
-    model = GPSTModel(
-        inducing_points=inducing_points,
-        config=config,
-        lengthscale_space=0.5,
-        lengthscale_time=0.3,
-        outputscale=10.0,
-        noise=1.0,
-        alpha=1.0,  # RQ 核参数（仅用于 additive 设计）
-        period=1.0  # Periodic 核参数（仅用于 additive 设计）
-    ).to(device)
+    # Extract targets from train_loader to compute normalization stats
+    all_y = []
+    for _, y in train_loader:
+        all_y.append(y)
+    all_y = torch.cat(all_y)
+    y_mean = all_y.mean()
+    y_std = all_y.std()
+    print(f"Target Normalization: Mean={y_mean.item():.2f}, Std={y_std.item():.2f}")
     
-    # 优化器
-    model.train()
-    model.likelihood.train()
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr)
-    
-    # 训练循环（简化版，使用较少的数据以加快速度）
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=config.batch_size, shuffle=True
-    )
-    
-    # 限制训练数据量（用于对比实验）
-    max_train_samples = 5000  # 使用前5000个样本进行快速训练
-    train_samples = min(len(train_dataset), max_train_samples)
-    
-    if not GPYTORCH_AVAILABLE:
-        raise ImportError("需要安装 gpytorch 才能训练模型")
-    
-    mll = VariationalELBO(
-        model.likelihood, model.gp, num_data=train_samples
-    )
-    
-    for epoch in range(min(config.num_epochs, 20)):  # 限制最大训练轮数
+    for epoch in range(NUM_EPOCHS):
         epoch_loss = 0.0
-        n_batches = 0
-        
-        for batch_idx, (coords, values) in enumerate(train_loader):
-            if batch_idx * config.batch_size >= max_train_samples:
-                break
+        for batch_x, batch_y in train_loader:
+            batch_x, batch_y = batch_x.to(device), batch_y.to(device)
             
-            coords = coords.to(device)
-            values = values.to(device)
+            # Normalize batch targets
+            batch_y_norm = (batch_y - y_mean.to(device)) / y_std.to(device)
             
             optimizer.zero_grad()
-            output = model(coords)
-            loss = -mll(output, values)
+            output = model(batch_x)
+            loss = -mll(output, batch_y_norm)
             loss.backward()
             optimizer.step()
-            
             epoch_loss += loss.item()
-            n_batches += 1
-        
-        if verbose and (epoch + 1) % 5 == 0:
-            print(f"  Epoch {epoch + 1}/{config.num_epochs}, Loss: {epoch_loss / n_batches:.4f}")
-    
+            
+        avg_loss = epoch_loss / len(train_loader)
+        epoch_losses.append(avg_loss)
+        if (epoch + 1) % 5 == 0:
+            print(f"Epoch {epoch+1}/{NUM_EPOCHS} - Loss: {avg_loss:.4f}")
+            
     train_time = time.time() - start_time
+    print(f"Training finished in {train_time:.2f}s")
     
-    return model, train_time
+    # 3. Evaluate
+    print("Evaluating...")
+    model.eval()
+    likelihood.eval()
+    
+    preds_list = []
+    std_list = []
+    
+    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        for batch_x, _ in test_loader:
+            batch_x = batch_x.to(device)
+            output = model(batch_x)
+            dist = likelihood(output)
+            
+            # Denormalize predictions
+            pred_mean_norm = dist.mean
+            pred_std_norm = dist.stddev
+            
+            pred_mean = pred_mean_norm * y_std.to(device) + y_mean.to(device)
+            pred_std = pred_std_norm * y_std.to(device)
+            
+            preds_list.append(pred_mean.cpu().numpy())
+            std_list.append(pred_std.cpu().numpy())
+            
+    predictions = np.concatenate(preds_list)
+    stds = np.concatenate(std_list)
+    
+    # 4. Calculate Metrics
+    metrics = {
+        "RMSE": float(rmse(test_values_np, predictions)),
+        "MAE": float(mae(test_values_np, predictions)),
+        "R2": float(r2(test_values_np, predictions)),
+        "CRPS": float(np.mean(crps_gaussian(test_values_np, predictions, stds))),
+        "Coverage": float(coverage_probability(test_values_np, predictions, stds)),
+        "Interval_Width": float(interval_width(stds)),
+        "Training_Time": train_time
+    }
+    
+    print(f"Results for {kernel_design}:")
+    print(json.dumps(metrics, indent=2))
+    
+    return metrics, epoch_losses
 
 
-def compare_kernel_designs(data_path: str = None, output_dir: str = None):
-    """
-    对比三种核函数设计
+def main():
+    """Main comparison loop"""
+    print("=" * 60)
+    print("  Comparing GP Kernel Designs")
+    print("=" * 60)
     
-    参数:
-    data_path: MODIS数据路径
-    output_dir: 输出目录
-    """
-    # 设置随机种子
-    set_seed(42)
+    # Load Data
+    data_path = project_root / "modis_aug_data" / "MODIS_Aug.mat"
     
-    # 设置设备
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"使用设备: {device}")
+    # Training Data
+    train_tensor = load_modis_tensor(str(data_path), key="training_tensor")
+    train_dataset = MODISDataset(train_tensor, mode="point")
     
-    # 数据路径
-    if data_path is None:
-        data_path = project_root / "modis_aug_data" / "MODIS_Aug.mat"
-    if output_dir is None:
-        output_dir = project_root / "output" / "kernel_comparison"
+    # Subsample training data for speed
+    indices = np.random.choice(len(train_dataset), int(len(train_dataset) * SUBSAMPLE_RATIO), replace=False)
     
-    os.makedirs(output_dir, exist_ok=True)
+    from torch.utils.data import Subset
+    train_subset = Subset(train_dataset, indices)
+    train_loader = DataLoader(train_subset, batch_size=BATCH_SIZE, shuffle=True)
+    print(f"Training set size (subsampled): {len(train_subset)}")
     
-    print_section_header("核函数设计对比实验")
-    
-    # 加载数据
-    print("\n加载数据...")
-    training_tensor = load_modis_tensor(str(data_path), key="training_tensor")
+    # Test Data (Full)
     test_tensor = load_modis_tensor(str(data_path), key="test_tensor")
-    
-    print(f"训练数据形状: {training_tensor.shape}")
-    print(f"测试数据形状: {test_tensor.shape}")
-    
-    # 创建数据集（使用点模式）
-    train_dataset = MODISDataset(training_tensor, mode="point")
     test_dataset = MODISDataset(test_tensor, mode="point")
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE * 2, shuffle=False)
     
-    print(f"训练样本数: {len(train_dataset)}")
-    print(f"测试样本数: {len(test_dataset)}")
+    # Extract ground truth for evaluation
+    test_values_np = test_dataset.values
+    print(f"Test set size: {len(test_dataset)}")
     
-    # 三种核函数设计配置
-    designs = [
-        {
-            'name': 'Design 1: 可分离核',
-            'config': GPSTConfig(
-                kernel_design="separable",
-                kernel_space="matern32",
-                kernel_time="matern32",
-                num_inducing=800,
-                lr=0.01,
-                num_epochs=30,
-                batch_size=1000
-            )
-        },
-        {
-            'name': 'Design 2: 加性核',
-            'config': GPSTConfig(
-                kernel_design="additive",
-                kernel_space="matern32",  # 用于 fallback
-                kernel_time="matern32",   # 用于 fallback
-                num_inducing=800,
-                lr=0.01,
-                num_epochs=30,
-                batch_size=1000
-            )
-        },
-        {
-            'name': 'Design 3: 非分离核',
-            'config': GPSTConfig(
-                kernel_design="non_separable",
-                kernel_space="matern32",
-                kernel_time="matern32",
-                num_inducing=800,
-                lr=0.01,
-                num_epochs=30,
-                batch_size=1000
-            )
-        }
-    ]
-    
-    # 存储结果
+    # Run Comparison
+    designs = ["separable", "additive", "non_separable"]
     results = {}
+    loss_curves = {}
     
-    print_section_header("训练和评估所有设计")
-    
-    # 对每种设计进行训练和评估
     for design in designs:
-        print(f"\n{'='*80}")
-        print(f"  处理: {design['name']}")
-        print(f"{'='*80}")
-        
         try:
-            # 训练模型
-            model, train_time = train_model(
-                design['config'], 
-                train_dataset, 
-                device=device,
-                verbose=True
-            )
-            
-            print(f"\n训练完成，耗时: {train_time:.2f}秒")
-            
-            # 评估模型
-            print("\n评估模型性能...")
-            metrics = evaluate_model(model, test_dataset, device=device)
-            
-            # 存储结果
-            results[design['name']] = {
-                'config': design['config'],
-                'train_time': train_time,
-                'metrics': metrics,
-                'model': model  # 保存模型（可选）
-            }
-            
-            # 打印结果
-            print(f"\n{design['name']} 评估结果:")
-            print(f"  RMSE: {metrics['rmse']:.4f} K")
-            print(f"  MAE: {metrics['mae']:.4f} K")
-            print(f"  R²: {metrics['r2']:.4f}")
-            print(f"  MAPE: {metrics['mape']:.4f} %")
-            print(f"  CRPS: {metrics['crps']:.4f} K")
-            print(f"  90% 预测区间覆盖率: {metrics['coverage']:.4f}")
-            print(f"  平均区间宽度: {metrics['interval_width']:.4f} K")
-            print(f"  训练时间: {train_time:.2f} 秒")
-            
+            metrics, losses = train_and_evaluate(design, train_loader, test_loader, test_values_np)
+            results[design] = metrics
+            loss_curves[design] = losses
         except Exception as e:
-            print(f"\n⚠️  设计 {design['name']} 训练失败: {str(e)}")
+            print(f"❌ Failed to run {design}: {e}")
             import traceback
             traceback.print_exc()
-            continue
-    
-    # 生成对比报告
-    print_section_header("生成对比报告")
-    
-    # 创建对比表格
-    print("\n📊 性能对比表:")
-    print("-" * 120)
-    print(f"{'设计':<30} {'RMSE ↓':<12} {'MAE ↓':<12} {'R² ↑':<12} {'CRPS ↓':<12} {'Coverage':<12} {'训练时间':<12}")
-    print("-" * 120)
-    
-    for design_name, result in results.items():
-        m = result['metrics']
-        print(f"{design_name:<30} {m['rmse']:<12.4f} {m['mae']:<12.4f} {m['r2']:<12.4f} "
-              f"{m['crps']:<12.4f} {m['coverage']:<12.4f} {result['train_time']:<12.2f}")
-    
-    print("-" * 120)
-    
-    # 保存结果到文件
-    results_file = output_dir / "kernel_comparison_results.txt"
-    with open(results_file, 'w', encoding='utf-8') as f:
-        f.write("核函数设计对比实验结果\n")
-        f.write("=" * 80 + "\n\n")
+            
+    # Save Results
+    with open(RESULTS_DIR / "kernel_comparison.json", "w") as f:
+        json.dump(results, f, indent=2)
         
-        for design_name, result in results.items():
-            f.write(f"{design_name}\n")
-            f.write("-" * 80 + "\n")
-            m = result['metrics']
-            f.write(f"RMSE: {m['rmse']:.4f} K\n")
-            f.write(f"MAE: {m['mae']:.4f} K\n")
-            f.write(f"R²: {m['r2']:.4f}\n")
-            f.write(f"MAPE: {m['mape']:.4f} %\n")
-            f.write(f"CRPS: {m['crps']:.4f} K\n")
-            f.write(f"90% 预测区间覆盖率: {m['coverage']:.4f}\n")
-            f.write(f"平均区间宽度: {m['interval_width']:.4f} K\n")
-            f.write(f"训练时间: {result['train_time']:.2f} 秒\n\n")
+    # Generate Comparison Table
+    df = pd.DataFrame(results).T
+    df.index.name = 'Kernel Design'
+    csv_path = RESULTS_DIR / "kernel_comparison_table.csv"
+    df.to_csv(csv_path)
+    print(f"\nComparison Table saved to {csv_path}")
+    print(df)
     
-    print(f"\n✅ 结果已保存到: {results_file}")
+    # Visualize
+    # 1. Metrics Comparison
+    metrics_to_plot = ['RMSE', 'R2', 'CRPS', 'Coverage']
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    axes = axes.flatten()
     
-    # 生成对比可视化
-    if len(results) > 0:
-        print("\n生成对比可视化...")
-        try:
-            fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-            
-            design_names = list(results.keys())
-            rmse_values = [results[d]['metrics']['rmse'] for d in design_names]
-            mae_values = [results[d]['metrics']['mae'] for d in design_names]
-            r2_values = [results[d]['metrics']['r2'] for d in design_names]
-            crps_values = [results[d]['metrics']['crps'] for d in design_names]
-            
-            # RMSE对比
-            axes[0, 0].bar(design_names, rmse_values, color=['#1f77b4', '#ff7f0e', '#2ca02c'])
-            axes[0, 0].set_title('RMSE 对比 (越小越好)', fontsize=14, fontweight='bold')
-            axes[0, 0].set_ylabel('RMSE (K)')
-            axes[0, 0].tick_params(axis='x', rotation=15)
-            axes[0, 0].grid(axis='y', alpha=0.3)
-            
-            # MAE对比
-            axes[0, 1].bar(design_names, mae_values, color=['#1f77b4', '#ff7f0e', '#2ca02c'])
-            axes[0, 1].set_title('MAE 对比 (越小越好)', fontsize=14, fontweight='bold')
-            axes[0, 1].set_ylabel('MAE (K)')
-            axes[0, 1].tick_params(axis='x', rotation=15)
-            axes[0, 1].grid(axis='y', alpha=0.3)
-            
-            # R²对比
-            axes[1, 0].bar(design_names, r2_values, color=['#1f77b4', '#ff7f0e', '#2ca02c'])
-            axes[1, 0].set_title('R² 对比 (越大越好)', fontsize=14, fontweight='bold')
-            axes[1, 0].set_ylabel('R²')
-            axes[1, 0].tick_params(axis='x', rotation=15)
-            axes[1, 0].grid(axis='y', alpha=0.3)
-            
-            # CRPS对比
-            axes[1, 1].bar(design_names, crps_values, color=['#1f77b4', '#ff7f0e', '#2ca02c'])
-            axes[1, 1].set_title('CRPS 对比 (越小越好)', fontsize=14, fontweight='bold')
-            axes[1, 1].set_ylabel('CRPS (K)')
-            axes[1, 1].tick_params(axis='x', rotation=15)
-            axes[1, 1].grid(axis='y', alpha=0.3)
-            
-            plt.tight_layout()
-            fig.savefig(output_dir / "kernel_designs_comparison.png", dpi=300, bbox_inches='tight')
-            plt.close()
-            
-            print(f"✅ 对比图已保存到: {output_dir / 'kernel_designs_comparison.png'}")
-        except Exception as e:
-            print(f"⚠️  生成可视化时出错: {str(e)}")
+    for i, metric in enumerate(metrics_to_plot):
+        sns.barplot(x=df.index, y=metric, data=df, ax=axes[i], palette='viridis')
+        axes[i].set_title(f'Comparison of {metric}')
+        axes[i].grid(True, alpha=0.3, axis='y')
+        
+    plt.tight_layout()
+    plt.savefig(FIGURES_DIR / "metrics_comparison.png", dpi=300)
     
-    print_section_header("实验完成")
-    print("\n✅ 核函数设计对比实验已完成！")
-    print(f"\n📁 结果保存在: {output_dir}")
+    # 2. Training Loss Curves
+    plt.figure(figsize=(10, 6))
+    for design, losses in loss_curves.items():
+        plt.plot(losses, label=f"{design} (Final: {losses[-1]:.3f})", linewidth=2)
+    plt.title('Training Loss Convergence')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss (ELBO)')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.savefig(FIGURES_DIR / "loss_convergence.png", dpi=300)
     
-    return results
+    print("\nComparison Completed!")
 
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="核函数设计对比实验")
-    parser.add_argument("--data_path", type=str, default=None, help="MODIS数据路径")
-    parser.add_argument("--output_dir", type=str, default=None, help="输出目录")
-    
-    args = parser.parse_args()
-    
-    # 确保导入gpytorch（如果可用）
-    try:
-        import gpytorch
-        compare_kernel_designs(
-            data_path=args.data_path,
-            output_dir=args.output_dir
-        )
-    except ImportError:
-        print("⚠️  警告: 需要安装 gpytorch 才能运行此脚本")
-        print("   请运行: pip install gpytorch")
-        sys.exit(1)
-
+    main()

@@ -1,23 +1,8 @@
-"""评估指标模块"""
-from .regression import (
-    rmse, mae, r2, mape, compute_regression_metrics
-)
-from .probabilistic import (
-    crps_gaussian,
-    crps_samples,
-    prediction_interval_coverage,
-    prediction_interval_from_gaussian,
-    calibration_error,
-    compute_probabilistic_metrics
-)
+"""Evaluation metrics module"""
+from .regression import compute_regression_metrics, rmse, mae, r2, mape
+from .probabilistic import compute_probabilistic_metrics, crps_gaussian, crps_samples, prediction_interval_coverage, calibration_error, coverage_probability, interval_width
 
 __all__ = [
-    "rmse", "mae", "r2", "mape", "compute_regression_metrics",
-    "crps_gaussian", "crps_samples",
-    "prediction_interval_coverage",
-    "prediction_interval_from_gaussian",
-    "calibration_error",
-    "compute_probabilistic_metrics"
+    "compute_regression_metrics", "rmse", "mae", "r2", "mape",
+    "compute_probabilistic_metrics", "crps_gaussian", "crps_samples", "prediction_interval_coverage", "calibration_error", "coverage_probability", "interval_width"
 ]
-
-
