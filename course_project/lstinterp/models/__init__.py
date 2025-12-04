@@ -1,5 +1,5 @@
 """Models module"""
-from .gp_st import STSeparableGP, STAdditiveGP, STNonSeparableGP
+from .gp_st import STSeparableGP, STAdditiveGP, STNonSeparableGP, GPSTModel, GPSTConfig
 from .unet import ProbUNet, UNetConfig, gaussian_nll_loss
 from .tree_baselines import TreeBaseline
 
@@ -11,6 +11,8 @@ __all__ = [
     "STAdditiveGP",
     "STNonSeparableGP",
     "STInducingGP",  # Backward compatibility
+    "GPSTModel",
+    "GPSTConfig",
     "ProbUNet",
     "UNetConfig",
     "gaussian_nll_loss",

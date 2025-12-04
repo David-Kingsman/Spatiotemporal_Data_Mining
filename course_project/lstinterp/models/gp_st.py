@@ -51,6 +51,7 @@ except ImportError:
 @dataclass
 class GPSTConfig:
     """Spatio-Temporal Gaussian Process Configuration"""
+    kernel_design: Literal["separable", "additive", "non_separable"] = "separable"
     kernel_space: Literal["matern32", "matern52", "rbf"] = "matern32"
     kernel_time: Literal["exp", "matern32", "rbf"] = "matern32"
     num_inducing: int = 800
